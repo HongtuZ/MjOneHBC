@@ -215,12 +215,20 @@ rewards = {
     "action_acc_l2": RewardTermCfg(func=mdp.action_acc_l2, weight=-0.01),
     "joint_pos_limits": RewardTermCfg(func=mdp.joint_pos_limits, weight=-0.01),
     "flat_orientation_l2": RewardTermCfg(func=mdp.flat_orientation_l2, weight=-0.01),
-    # -- task
-    "track_linear_velocity": RewardTermCfg(
-        func=mdp.track_linear_velocity, weight=1.0, params={"command_name": "base_velocity", "std": 0.5}
+    "joint_deviation_exp": RewardTermCfg(
+        func=mdp.posture,
+        weight=-0.01,
+        params={"std": {".*": 0.5}, "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",))},
     ),
-    "track_angular_velocity": RewardTermCfg(
-        func=mdp.track_angular_velocity, weight=0.5, params={"command_name": "base_velocity", "std": 0.5}
+    "joint_energy": RewardTermCfg(
+        func=mdp.electrical_power_cost, weight=-0.01, params={"asset_cfg": SceneEntityCfg("robot", joint_names=(".*",))}
+    ),
+    # -- task
+    "track_lin_vel_exp": RewardTermCfg(
+        func=mdp.track_lin_vel_exp, weight=1.0, params={"command_name": "base_velocity", "std": 0.5}
+    ),
+    "track_ang_vel_exp": RewardTermCfg(
+        func=mdp.track_ang_vel_exp, weight=0.5, params={"command_name": "base_velocity", "std": 0.5}
     ),
 }
 
