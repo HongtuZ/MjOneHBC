@@ -3,6 +3,18 @@ import torch
 from pathlib import Path
 from collections import defaultdict
 from mjlab.utils.lab_api import math as math_utils
+from dataclasses import dataclass
+
+
+@dataclass
+class Motion:
+    time_step_total: int
+    joint_pos: torch.Tensor  # (num_frames, num_joints)
+    joint_vel: torch.Tensor  # (num_frames, num_joints)
+    body_pos_w: torch.Tensor  # (num_frames, 3)
+    body_quat_w: torch.Tensor  # (num_frames, 4) wxyz
+    body_lin_vel_w: torch.Tensor  # (num_frames, 3)
+    body_ang_vel_w: torch.Tensor  # (num_frames, 3)
 
 
 class MotionLoader:
@@ -15,7 +27,9 @@ class MotionLoader:
         self.motion_data_dir = motion_data_dir
         self.motion_data_weights = motion_data_weights
         self.joint_names = None
+        self.joint_name2idx = {}
         self.body_names = None
+        self.body_name2idx = {}
         self.device = device
         if self.motion_data_dir is not None:
             self._load_motion_data()
@@ -41,12 +55,17 @@ class MotionLoader:
         self.motion_weights = []
 
         self.root_pos_w = []
-        self.root_quat_w = []  # x,y,z,w
+        self.root_quat_w = []  # wxyz
         self.root_lin_vel_w = []
         self.root_ang_vel_w = []
+        self.body_pos_w = []
+        self.body_quat_w = []  # wxyz
+        self.body_lin_vel_w = []
+        self.body_ang_vel_w = []
+        self.body_pos_b = []
+        self.body_quat_b = []  # wxyz
         self.joint_pos = []
         self.joint_vel = []
-        self.body_pos_b = []
 
         # only load the motion data files that are in the motion weights dict
         for motion_name, motion_weight in self.motion_data_weights.items():
@@ -70,14 +89,39 @@ class MotionLoader:
                 raise ValueError(f"[MotionLoader] Motion has only {num_frames} frames, cannot compute velocity.")
 
             fps = motion_raw_data["fps"]
-            root_pos_w = torch.from_numpy(motion_raw_data["root_pos_w"]).to(self.device)
-            root_quat_w = torch.from_numpy(motion_raw_data["root_quat_w"]).to(self.device)  # w,x,y,z
-            joint_pos = torch.from_numpy(motion_raw_data["joint_pos"]).to(self.device)
-            body_pos_b = torch.from_numpy(motion_raw_data["body_pos_b"]).to(self.device)
+            root_pos_w = torch.from_numpy(motion_raw_data["root_pos_w"]).float().to(self.device)  # (num_frames, 3)
+            root_quat_w = (
+                torch.from_numpy(motion_raw_data["root_quat_w"]).float().to(self.device)
+            )  # (num_frames, 4) wxyz
+            joint_pos = (
+                torch.from_numpy(motion_raw_data["joint_pos"]).float().to(self.device)
+            )  # (num_frames, num_joints)
+            body_pos_b = (
+                torch.from_numpy(motion_raw_data["body_pos_b"]).float().to(self.device)
+            )  # (num_frames, num_bodies, 3)
+            body_pos_w = math_utils.quat_apply_inverse(
+                root_quat_w.unsqueeze(1).expand(-1, body_pos_b.shape[1], -1), body_pos_b
+            ) + root_pos_w.unsqueeze(1)
+            body_quat_b = (
+                torch.from_numpy(motion_raw_data["body_quat_b"]).float().to(self.device)
+            )  # (num_frames, num_bodies, 4) wxyz
+            body_quat_w = math_utils.quat_mul(
+                root_quat_w.unsqueeze(1).expand(-1, body_quat_b.shape[1], -1), body_quat_b
+            )
             if not self.body_names:
                 self.body_names = motion_raw_data["body_names"]
+                self.body_name2idx = {name: i for i, name in enumerate(self.body_names)}
+            if self.body_names != motion_raw_data["body_names"]:
+                raise ValueError(
+                    f"Motion data body names {self.body_names} do not match {motion_raw_data['body_names']}."
+                )
             if not self.joint_names:
                 self.joint_names = motion_raw_data["joint_names"]
+                self.joint_name2idx = {name: i for i, name in enumerate(self.joint_names)}
+            if self.joint_names != motion_raw_data["joint_names"]:
+                raise ValueError(
+                    f"Motion data joint names {self.joint_names} do not match {motion_raw_data['joint_names']}."
+                )
 
             # Calculate vel
             dt = 1.0 / fps
@@ -86,15 +130,17 @@ class MotionLoader:
             root_lin_vel_w[:-1] = (root_pos_w[1:] - root_pos_w[:-1]) / dt
             root_lin_vel_w[-1] = root_lin_vel_w[-2]
 
-            root_ang_vel_w = torch.zeros_like(root_pos_w)
-            root_ang_vel_w[:-1] = (
-                math_utils.quat_apply(
-                    root_quat_w[:1],
-                    math_utils.quat_box_minus(root_quat_w[1:], root_quat_w[:-1]),
-                )
-                / dt
-            )
+            body_lin_vel_w = torch.zeros_like(body_pos_w)
+            body_lin_vel_w[:-1] = (body_pos_w[1:] - body_pos_w[:-1]) / dt
+            body_lin_vel_w[-1] = body_lin_vel_w[-2]
+
+            root_ang_vel_w = torch.zeros_like(root_pos_w)  # (F,3)
+            root_ang_vel_w[:-1] = math_utils.quat_box_minus(root_quat_w[1:], root_quat_w[:-1]) / dt
             root_ang_vel_w[-1] = root_ang_vel_w[-2]
+
+            body_ang_vel_w = torch.zeros_like(body_pos_w)  # (F,B,3)
+            body_ang_vel_w[:-1] = math_utils.quat_box_minus(body_quat_w[1:], body_quat_w[:-1]) / dt
+            body_ang_vel_w[-1] = body_ang_vel_w[-2]
 
             joint_vel = torch.zeros_like(joint_pos)
             joint_vel[:-1] = (joint_pos[1:] - joint_pos[:-1]) / dt
@@ -111,9 +157,14 @@ class MotionLoader:
             self.root_quat_w.append(root_quat_w)
             self.root_lin_vel_w.append(root_lin_vel_w)
             self.root_ang_vel_w.append(root_ang_vel_w)
+            self.body_pos_w.append(body_pos_w)
+            self.body_quat_w.append(body_quat_w)
+            self.body_lin_vel_w.append(body_lin_vel_w)
+            self.body_ang_vel_w.append(body_ang_vel_w)
             self.joint_pos.append(joint_pos)
             self.joint_vel.append(joint_vel)
             self.body_pos_b.append(body_pos_b)
+            self.body_quat_b.append(body_quat_b)
 
         self.motion_durations = torch.tensor(self.motion_durations, dtype=torch.float, device=self.device)
         self.motion_fps = torch.tensor(self.motion_fps, dtype=torch.float, device=self.device)
@@ -125,9 +176,14 @@ class MotionLoader:
         self.root_quat_w = torch.cat(self.root_quat_w)
         self.root_lin_vel_w = torch.cat(self.root_lin_vel_w)
         self.root_ang_vel_w = torch.cat(self.root_ang_vel_w)
+        self.body_pos_w = torch.cat(self.body_pos_w)
+        self.body_quat_w = torch.cat(self.body_quat_w)
+        self.body_lin_vel_w = torch.cat(self.body_lin_vel_w)
+        self.body_ang_vel_w = torch.cat(self.body_ang_vel_w)
         self.joint_pos = torch.cat(self.joint_pos)
         self.joint_vel = torch.cat(self.joint_vel)
         self.body_pos_b = torch.cat(self.body_pos_b)
+        self.body_quat_b = torch.cat(self.body_quat_b)
 
         # Some other information
         self.num_joints = self.joint_pos.shape[-1]
@@ -199,17 +255,17 @@ class MotionLoader:
                 f"motion_ids shape {motion_ids.shape} should be equal with motion_times shape {motion_times.shape}"
             )
 
-        phase = motion_times / self.motion_durations[motion_ids]
+        phase = motion_times / self.motion_durations[motion_ids]  # (ids,)
         num_frames = self.motion_num_frames[motion_ids]
 
-        frame_idx0 = torch.floor((phase * (num_frames - 1))).long()
-        frame_idx1 = torch.minimum(frame_idx0 + 1, num_frames - 1)
-        blend = (phase * (num_frames - 1) - frame_idx0).reshape(-1, 1)
+        frame_idx0 = torch.floor((phase * (num_frames - 1))).long()  # (ids,)
+        frame_idx1 = torch.minimum(frame_idx0 + 1, num_frames - 1)  # (ids,)
+        blend = (phase * (num_frames - 1) - frame_idx0).reshape(-1, 1)  # (ids, 1)
 
         frame_idx0 += self.motion_start_indices[motion_ids]
         frame_idx1 += self.motion_start_indices[motion_ids]
 
-        root_pos_w_0 = self.root_pos_w[frame_idx0]
+        root_pos_w_0 = self.root_pos_w[frame_idx0]  # (ids, 3)
         root_pos_w_1 = self.root_pos_w[frame_idx1]
         root_quat_w_0 = self.root_quat_w[frame_idx0]
         root_quat_w_1 = self.root_quat_w[frame_idx1]
@@ -217,40 +273,64 @@ class MotionLoader:
         root_lin_vel_w_1 = self.root_lin_vel_w[frame_idx1]
         root_ang_vel_w_0 = self.root_ang_vel_w[frame_idx0]
         root_ang_vel_w_1 = self.root_ang_vel_w[frame_idx1]
+        body_pos_w_0 = self.body_pos_w[frame_idx0]  # (ids, body, 3)
+        body_pos_w_1 = self.body_pos_w[frame_idx1]
+        body_quat_w_0 = self.body_quat_w[frame_idx0]
+        body_quat_w_1 = self.body_quat_w[frame_idx1]
+        body_lin_vel_w_0 = self.body_lin_vel_w[frame_idx0]
+        body_lin_vel_w_1 = self.body_lin_vel_w[frame_idx1]
+        body_ang_vel_w_0 = self.body_ang_vel_w[frame_idx0]
+        body_ang_vel_w_1 = self.body_ang_vel_w[frame_idx1]
         joint_pos_0 = self.joint_pos[frame_idx0]
         joint_pos_1 = self.joint_pos[frame_idx1]
         joint_vel_0 = self.joint_vel[frame_idx0]
         joint_vel_1 = self.joint_vel[frame_idx1]
         body_pos_b_0 = self.body_pos_b[frame_idx0]
         body_pos_b_1 = self.body_pos_b[frame_idx1]
+        body_quat_b_0 = self.body_quat_b[frame_idx0]
+        body_quat_b_1 = self.body_quat_b[frame_idx1]
 
         # interpolate the values
-        root_quat_w = self.quat_slerp(root_quat_w_0, root_quat_w_1, blend).float()
-
         root_pos_w = torch.lerp(root_pos_w_0, root_pos_w_1, blend)
+        root_quat_w = self.quat_slerp(root_quat_w_0, root_quat_w_1, blend).float()
         root_lin_vel_w = torch.lerp(root_lin_vel_w_0, root_lin_vel_w_1, blend)
         root_lin_vel_b = math_utils.quat_apply_inverse(root_quat_w, root_lin_vel_w)
         root_ang_vel_w = torch.lerp(root_ang_vel_w_0, root_ang_vel_w_1, blend)
         root_ang_vel_b = math_utils.quat_apply_inverse(root_quat_w, root_ang_vel_w)
         joint_pos = torch.lerp(joint_pos_0, joint_pos_1, blend)
         joint_vel = torch.lerp(joint_vel_0, joint_vel_1, blend)
-        body_pos_b = torch.lerp(body_pos_b_0, body_pos_b_1, blend.reshape(-1, 1, 1))
+        body_pos_w = torch.lerp(body_pos_w_0, body_pos_w_1, blend.unsqueeze(-1))
+        body_quat_w = self.quat_slerp(body_quat_w_0, body_quat_w_1, blend.unsqueeze(-1)).float()
+        body_lin_vel_w = torch.lerp(body_lin_vel_w_0, body_lin_vel_w_1, blend.unsqueeze(-1))
+        body_ang_vel_w = torch.lerp(body_ang_vel_w_0, body_ang_vel_w_1, blend.unsqueeze(-1))
+        root_quat_w_expanded = root_quat_w.unsqueeze(1).expand(-1, body_lin_vel_w.shape[1], -1)
+        body_lin_vel_b = math_utils.quat_apply_inverse(root_quat_w_expanded, body_lin_vel_w)
+        body_ang_vel_b = math_utils.quat_apply_inverse(root_quat_w_expanded, body_ang_vel_w)
+        body_pos_b = torch.lerp(body_pos_b_0, body_pos_b_1, blend.unsqueeze(-1))
+        body_quat_b = self.quat_slerp(body_quat_b_0, body_quat_b_1, blend.unsqueeze(-1)).float()
 
         if joint_names:
-            joint2isaac_idxs = torch.tensor(
-                [self.joint_names.index(name) for name in joint_names],
+            joint2target_idxs = torch.tensor(
+                [self.joint_name2idx[name] for name in joint_names],
                 dtype=torch.long,
                 device=self.device,
             )
-            joint_pos = joint_pos[:, joint2isaac_idxs]
-            joint_vel = joint_vel[:, joint2isaac_idxs]
+            joint_pos = joint_pos[:, joint2target_idxs]
+            joint_vel = joint_vel[:, joint2target_idxs]
         if body_names:
-            body2isaac_idxs = torch.tensor(
-                [self.body_names.index(name) for name in body_names],
+            body2target_idxs = torch.tensor(
+                [self.body_name2idx[name] for name in body_names],
                 dtype=torch.long,
                 device=self.device,
             )
-            body_pos_b = body_pos_b[:, body2isaac_idxs]
+            body_pos_w = body_pos_w[:, body2target_idxs]
+            body_quat_w = body_quat_w[:, body2target_idxs]
+            body_lin_vel_w = body_lin_vel_w[:, body2target_idxs]
+            body_ang_vel_w = body_ang_vel_w[:, body2target_idxs]
+            body_lin_vel_b = body_lin_vel_b[:, body2target_idxs]
+            body_ang_vel_b = body_ang_vel_b[:, body2target_idxs]
+            body_pos_b = body_pos_b[:, body2target_idxs]
+            body_quat_b = body_quat_b[:, body2target_idxs]
 
         return {
             "root_pos_w": root_pos_w,
@@ -259,17 +339,24 @@ class MotionLoader:
             "root_lin_vel_b": root_lin_vel_b,
             "root_ang_vel_w": root_ang_vel_w,
             "root_ang_vel_b": root_ang_vel_b,
+            "body_pos_w": body_pos_w,
+            "body_quat_w": body_quat_w,
+            "body_lin_vel_w": body_lin_vel_w,
+            "body_lin_vel_b": body_lin_vel_b,
+            "body_ang_vel_w": body_ang_vel_w,
+            "body_ang_vel_b": body_ang_vel_b,
             "joint_pos": joint_pos,
             "joint_vel": joint_vel,
             "body_pos_b": body_pos_b,
+            "body_quat_b": body_quat_b,
         }
 
     def get_motion_seq_data(
         self,
         motion_ids: torch.Tensor,
         motion_seq_times: torch.Tensor,
-        joint_names: list = None,
-        body_names: list = None,
+        joint_names: list | None = None,
+        body_names: list | None = None,
     ) -> dict[str, torch.Tensor]:
         motion_seq_data = defaultdict(list)
         for seq in range(motion_seq_times.shape[-1]):
@@ -279,6 +366,22 @@ class MotionLoader:
         for k, v in motion_seq_data.items():
             motion_seq_data[k] = torch.stack(v, dim=1)
         return dict(motion_seq_data)
+
+    def get_one_motion(
+        self, motion_id: int, dt: float, joint_names: list | None = None, body_names: list | None = None
+    ) -> Motion:
+        sampled_times = torch.arange(0, self.motion_durations[motion_id], dt).to(self.device)
+        motion_ids = torch.full_like(sampled_times, motion_id, dtype=int).to(self.device)
+        motion_data = self.get_motion_data(motion_ids, sampled_times, joint_names, body_names)
+        return Motion(
+            time_step_total=sampled_times.shape[-1],
+            joint_pos=motion_data["joint_pos"],
+            joint_vel=motion_data["joint_vel"],
+            body_pos_w=motion_data["body_pos_w"],
+            body_quat_w=motion_data["body_quat_w"],
+            body_lin_vel_w=motion_data["body_lin_vel_w"],
+            body_ang_vel_w=motion_data["body_ang_vel_w"],
+        )
 
     # TODO: We implement this function due to isaaclab math_utils does not support parallel quat_slerp,
     # this function should be replaced with math_utils.quat_slerp in the future.
@@ -297,7 +400,7 @@ class MotionLoader:
         Returns:
             Interpolated quaternions. Shape is (N, 4) or (N, M, 4).
         """
-        qx, qy, qz, qw = 0, 1, 2, 3  # xyzw
+        qw, qx, qy, qz = 0, 1, 2, 3  # wxyz
         cos_half_theta = (
             q0[..., qw] * q1[..., qw]
             + q0[..., qx] * q1[..., qx]
@@ -312,7 +415,7 @@ class MotionLoader:
         cos_half_theta = torch.unsqueeze(cos_half_theta, dim=-1)
 
         half_theta = torch.acos(cos_half_theta)
-        sin_half_theta = torch.sqrt(1.0 - cos_half_theta * cos_half_theta)
+        sin_half_theta = torch.clamp(torch.sqrt(1.0 - cos_half_theta * cos_half_theta), min=1e-6)
 
         ratio_a = torch.sin((1 - blend) * half_theta) / sin_half_theta
         ratio_b = torch.sin(blend * half_theta) / sin_half_theta

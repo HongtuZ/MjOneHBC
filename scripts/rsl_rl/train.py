@@ -12,7 +12,7 @@ from typing import Literal, cast
 import tyro
 import mjlab
 
-from mjlab.envs import ManagerBasedRlEnvCfg
+from mjlab.envs import ManagerBasedRlEnv, ManagerBasedRlEnvCfg
 from mjlab.rl import MjlabOnPolicyRunner, RslRlBaseRunnerCfg, RslRlVecEnvWrapper
 from mjlab.scripts._cli import maybe_print_top_level_help
 from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg, load_runner_cls
@@ -21,8 +21,6 @@ from mjlab.utils.gpu import select_gpus
 from mjlab.utils.os import dump_yaml, get_checkpoint_path
 from mjlab.utils.torch import configure_torch_backends
 from mjlab.utils.wrappers import VideoRecorder
-
-from OneHBC.tasks.one_hbc.one_hbc_env import OneHBCEnv
 
 
 @dataclass(frozen=True)
@@ -86,7 +84,7 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
 
     # pprint(asdict(cfg.env))
     # return
-    env = OneHBCEnv(cfg=cfg.env, device=device, render_mode="rgb_array" if cfg.video else None)
+    env = ManagerBasedRlEnv(cfg=cfg.env, device=device, render_mode="rgb_array" if cfg.video else None)
 
     log_root_path = log_dir.parent  # Go up from specific run dir to experiment dir.
 

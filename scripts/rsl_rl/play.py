@@ -12,6 +12,7 @@ import torch
 import tyro
 
 import mjlab
+from mjlab.envs import ManagerBasedRlEnv
 from mjlab.rl import MjlabOnPolicyRunner, RslRlVecEnvWrapper
 from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg, load_runner_cls
 from mjlab.utils.os import get_checkpoint_path
@@ -19,8 +20,6 @@ from mjlab.utils.torch import configure_torch_backends
 from mjlab.utils.wrappers import VideoRecorder
 from mjlab.viewer import NativeMujocoViewer, ViserPlayViewer
 from mjlab.viewer.viser.viewer import CheckpointManager, format_time_ago
-
-from OneHBC.tasks.one_hbc.one_hbc_env import OneHBCEnv
 
 
 @dataclass(frozen=True)
@@ -90,7 +89,7 @@ def run_play(task_id: str, cfg: PlayConfig):
     render_mode = "rgb_array" if (TRAINED_MODE and cfg.video) else None
     if cfg.video and DUMMY_MODE:
         print("[WARN] Video recording with dummy agents is disabled (no checkpoint/log_dir).")
-    env = OneHBCEnv(cfg=env_cfg, device=device, render_mode=render_mode)
+    env = ManagerBasedRlEnv(cfg=env_cfg, device=device, render_mode=render_mode)
 
     if TRAINED_MODE and cfg.video:
         print("[INFO] Recording videos during play")

@@ -356,9 +356,10 @@
         <actuatorfrc name="rwrji" actuator="rwrj" noise="0.0"/>
 
         <!-- IMU陀螺仪（匹配真实硬件参数） 安装在imu站点   噪声       截止频率'34.9' （Hz），用于低通滤波 -->
-        <gyro name="gyro" site='imu' noise='0.005' cutoff='198'/>
+        <gyro name="imu_ang_vel" site='imu' noise='0.005' cutoff='198'/>
         <!-- IMU加速度计                          噪声           截止频率'157'（Hz） -->
-        <accelerometer name="acc" site='imu' noise='0.005' cutoff='198'/>
+        <velocimeter name="imu_lin_vel" site="imu"/>
+        <accelerometer name="imu_lin_acc" site='imu' noise='0.005' cutoff='198'/>
         <!-- 帧四元数传感器              测量站点对象     四元数噪声     关联的站点名称 -->
         <framequat name='bq' objtype='site' noise='0.001' objname='imu'/>
     </sensor>
