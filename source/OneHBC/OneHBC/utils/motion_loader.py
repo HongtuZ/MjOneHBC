@@ -353,19 +353,17 @@ class MotionLoader:
 
     def get_motion_seq_data(
         self,
-        motion_ids: torch.Tensor,
-        motion_seq_times: torch.Tensor,
+        motion_ids: torch.Tensor,  # (ids,)
+        motion_seq_times: torch.Tensor,  # (ids, n_step)
         joint_names: list | None = None,
         body_names: list | None = None,
     ) -> dict[str, torch.Tensor]:
-        motion_seq_data = defaultdict(list)
-        for seq in range(motion_seq_times.shape[-1]):
-            motion_state = self.get_motion_data(motion_ids, motion_seq_times[:, seq], joint_names, body_names)
-            for k, v in motion_state.items():
-                motion_seq_data[k].append(v)
-        for k, v in motion_seq_data.items():
-            motion_seq_data[k] = torch.stack(v, dim=1)
-        return dict(motion_seq_data)
+        new_motion_ids = motion_ids.unsqueeze(-1).expand(-1, motion_seq_times.shape[-1]).reshape(-1)
+        new_motion_seq_times = motion_seq_times.reshape(-1)
+        motion_data = self.get_motion_data(new_motion_ids, new_motion_seq_times, joint_names, body_names)
+        for k, v in motion_data.items():
+            motion_data[k] = v.reshape(*motion_seq_times.shape, *v.shape[1:])
+        return motion_data
 
     def get_one_motion(
         self, motion_id: int, dt: float, joint_names: list | None = None, body_names: list | None = None
