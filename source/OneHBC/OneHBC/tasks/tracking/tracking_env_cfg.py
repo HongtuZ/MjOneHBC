@@ -1,5 +1,6 @@
 import math
-from dataclasses import replace, dataclass, field
+from copy import deepcopy
+from dataclasses import dataclass, field, replace
 
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp import dr
@@ -264,13 +265,13 @@ class TrackingEnvCfg(ManagerBasedRlEnvCfg):
         )
     )
     # Basic settings
-    observations: dict = field(default_factory=lambda: observations)
-    actions: dict = field(default_factory=lambda: actions)
-    commands: dict = field(default_factory=lambda: commands)
+    observations: dict = field(default_factory=lambda: deepcopy(observations))
+    actions: dict = field(default_factory=lambda: deepcopy(actions))
+    commands: dict = field(default_factory=lambda: deepcopy(commands))
     # MDP settings
-    rewards: dict = field(default_factory=lambda: rewards)
-    terminations: dict = field(default_factory=lambda: terminations)
-    events: dict = field(default_factory=lambda: events)
+    rewards: dict = field(default_factory=lambda: deepcopy(rewards))
+    terminations: dict = field(default_factory=lambda: deepcopy(terminations))
+    events: dict = field(default_factory=lambda: deepcopy(events))
     viewer: ViewerConfig = field(
         default_factory=lambda: ViewerConfig(
             origin_type=ViewerConfig.OriginType.ASSET_BODY,

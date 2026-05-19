@@ -1,14 +1,16 @@
 """THS23DOF velocity environment configurations."""
 
+from copy import deepcopy
+from dataclasses import dataclass
+
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs import mdp as envs_mdp
 from mjlab.envs.mdp.actions import JointPositionActionCfg
-from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.managers.event_manager import EventTermCfg
-from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.observation_manager import ObservationGroupCfg, ObservationTermCfg
+from mjlab.managers.reward_manager import RewardTermCfg
+from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.managers.termination_manager import TerminationTermCfg
-from mjlab.utils.noise import UniformNoiseCfg as Unoise
 from mjlab.sensor import (
     ContactMatch,
     ContactSensorCfg,
@@ -19,13 +21,13 @@ from mjlab.sensor import (
 )
 from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 from mjlab.tasks.velocity.velocity_env_cfg import make_velocity_env_cfg
+from mjlab.terrains import BoxFlatTerrainCfg, HfRandomUniformTerrainCfg, TerrainGeneratorCfg
+from mjlab.utils.noise import UniformNoiseCfg as Unoise
 
-from OneHBC import ONEHBC_ROOT
 import OneHBC.tasks.tracking.mdp as mdp
-from OneHBC.assets.robots import THS23DOF_CFG, THS23DOF_ACTION_SCALE
+from OneHBC import ONEHBC_ROOT
+from OneHBC.assets.robots import THS23DOF_ACTION_SCALE, THS23DOF_CFG
 from OneHBC.tasks.tracking.tracking_env_cfg import TrackingEnvCfg
-
-from dataclasses import dataclass
 
 # -----------------------------------------------------------------------------
 #                                   Sensors
@@ -42,6 +44,32 @@ self_collision_cfg = ContactSensorCfg(
 )
 
 # -----------------------------------------------------------------------------
+#                                  Terrain
+# -----------------------------------------------------------------------------
+
+half_rough_terrain_cfg = TerrainGeneratorCfg(
+    size=(5.0, 5.0),
+    num_rows=40,
+    num_cols=40,
+    curriculum=True,
+    difficulty_range=(0.0, 1.0),
+    add_lights=True,
+    sub_terrains={
+        "flat": BoxFlatTerrainCfg(proportion=0.5),
+        "rough": HfRandomUniformTerrainCfg(
+            proportion=0.5,
+            noise_range=(0, 0.05),
+            noise_step=0.0025,
+            downsampled_scale=0.1,
+            border_width=0.0,
+            horizontal_scale=0.1,
+            vertical_scale=0.0025,
+        ),
+    },
+)
+
+
+# -----------------------------------------------------------------------------
 #                               Environment
 # -----------------------------------------------------------------------------
 
@@ -56,7 +84,7 @@ class TrackingFlatEnvCfg(TrackingEnvCfg):
 
         # Scene
         self.scene.entities = {"robot": THS23DOF_CFG}
-        self.scene.sensors = (self_collision_cfg,)
+        self.scene.sensors = (deepcopy(self_collision_cfg),)
 
         # Viewer
         self.viewer.body_name = "torso_link"
@@ -106,6 +134,30 @@ class TrackingFlatPlayEnvCfg(TrackingFlatEnvCfg):
         self.events.pop("push_robot", None)
 
         # Disable RSI randomization.
+        self.commands["motion"].pose_range = {}
+        self.commands["motion"].velocity_range = {}
+        self.commands["motion"].sampling_mode = "start"
+
+
+@dataclass(kw_only=True)
+class TrackingRoughEnvCfg(TrackingFlatEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        assert self.scene.terrain is not None
+        self.scene.terrain.terrain_type = "generator"
+        self.scene.terrain.terrain_generator = deepcopy(half_rough_terrain_cfg)
+
+
+@dataclass(kw_only=True)
+class TrackingRoughPlayEnvCfg(TrackingRoughEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.episode_length_s = int(1e9)
+
+        self.observations["actor"].enable_corruption = False
+        self.events.pop("push_robot", None)
+
+        # Disable RSI randomization for deterministic inspection.
         self.commands["motion"].pose_range = {}
         self.commands["motion"].velocity_range = {}
         self.commands["motion"].sampling_mode = "start"
