@@ -4,7 +4,7 @@ import time
 import mujoco as mj
 import mujoco.viewer as mjv
 import numpy as np
-from helper import ActionJointCfg
+from helper import ActionJointCfg, normalize
 from scipy.spatial.transform import Rotation as R
 
 from mujoco_env.visualizer import MujocoDebugVisualizer
@@ -67,7 +67,7 @@ class MujocoEnv:
                 size=[0, 0, 0.01],
                 conaffinity=1,
                 condim=3,
-                friction=[0.8, 0.1, 0.1],
+                friction=[1.0, 0.005, 0.0001],
                 material="ground_material",
             )
         # Compile model
@@ -137,10 +137,10 @@ class MujocoEnv:
 
         # return info
         base_quat = self.data.qpos[3:7]
+        base_ang_vel = self.data.qvel[3:6]
         base_rot_inv = R.from_quat(base_quat, scalar_first=True).inv()
-        base_ang_vel = base_rot_inv.apply(self.data.qvel[3:6])
         projected_gravity = base_rot_inv.apply(np.array([0, 0, -9.81]))
-        projected_gravity = projected_gravity / np.linalg.norm(projected_gravity)
+        projected_gravity = normalize(projected_gravity)
         obs_info = {
             "robot_pos": self.data.qpos[:3],
             "robot_quat": base_quat,
@@ -194,8 +194,8 @@ class MujocoEnv:
         self.data.qpos[self.jnt_qpos_indices] = self.default_joint_pos
         mj.mj_forward(self.model, self.data)
         base_quat = self.data.qpos[3:7]
+        base_ang_vel = self.data.qvel[3:6]
         base_rot = R.from_quat(base_quat, scalar_first=True)
-        base_ang_vel = base_rot.inv().apply(self.data.qvel[3:6])
         projected_gravity = base_rot.inv().apply(np.array([0, 0, -9.81]))
         projected_gravity = projected_gravity / np.linalg.norm(projected_gravity)
         return {

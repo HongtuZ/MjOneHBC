@@ -20,11 +20,13 @@ def main(xml_path: str, model_path: str):
 
     def keyboard_callback(keycode):
         nonlocal finish_sim, policy
+        if keycode == 256:  # ESC
+            finish_sim = True
         if policy.command_name == "motion":
+            if chr(keycode) == " ":  # 空格
+                policy.motion_step_t = 0
             pass
         else:
-            if keycode == 256:  # ESC
-                finish_sim = True
             if chr(keycode) == " ":  # 空格
                 policy.vel_x, policy.vel_y, policy.ang_vel_z = 0.0, 0.0, 0.0
             if keycode == 265:  # 箭头上
