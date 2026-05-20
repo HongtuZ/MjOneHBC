@@ -1,14 +1,16 @@
+from dataclasses import dataclass, field
+
 from mjlab.rl import (
     RslRlModelCfg,
     RslRlOnPolicyRunnerCfg,
     RslRlPpoAlgorithmCfg,
 )
-from dataclasses import dataclass, field
 
 
 @dataclass
 class TrackingPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     logger: str = "tensorboard"
+    upload_model: bool = False
     num_steps_per_env: int = 24
     max_iterations: int = 30_000
     save_interval: int = 50

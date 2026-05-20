@@ -8,10 +8,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
+import mjlab
 import torch
 import tyro
-
-import mjlab
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.rl import MjlabOnPolicyRunner, RslRlVecEnvWrapper
 from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg, load_runner_cls
@@ -125,6 +124,7 @@ def run_play(task_id: str, cfg: PlayConfig):
         runner_cls = load_runner_cls(task_id) or MjlabOnPolicyRunner
         runner = runner_cls(env, asdict(agent_cfg), device=device)
         runner.load(str(resume_path), load_cfg={"actor": True}, strict=True, map_location=device)
+        runner.save(str(resume_path))
         policy = runner.get_inference_policy(device=device)
 
     # Build checkpoint manager for hot-swapping checkpoints in the viewer.

@@ -1,5 +1,5 @@
 from mjlab.tasks.registry import register_mjlab_task
-from mjlab.rl import MjlabOnPolicyRunner
+from OneHBC.tasks.tracking.rl import MotionTrackingOnPolicyRunner
 
 from .env_cfg import TrackingFlatEnvCfg, TrackingFlatPlayEnvCfg, TrackingRoughEnvCfg, TrackingRoughPlayEnvCfg
 from .rl_cfg import TrackingPPORunnerCfg
@@ -9,7 +9,7 @@ register_mjlab_task(
     env_cfg=TrackingFlatEnvCfg(),
     play_env_cfg=TrackingFlatPlayEnvCfg(),
     rl_cfg=TrackingPPORunnerCfg(),
-    runner_cls=MjlabOnPolicyRunner,
+    runner_cls=MotionTrackingOnPolicyRunner,
 )
 
 register_mjlab_task(
@@ -17,5 +17,5 @@ register_mjlab_task(
     env_cfg=TrackingRoughEnvCfg(),
     play_env_cfg=TrackingRoughPlayEnvCfg(),
     rl_cfg=TrackingPPORunnerCfg(),
-    runner_cls=MjlabOnPolicyRunner,
+    runner_cls=MotionTrackingOnPolicyRunner,
 )

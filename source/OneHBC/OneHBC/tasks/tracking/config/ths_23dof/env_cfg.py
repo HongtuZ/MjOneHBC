@@ -103,9 +103,9 @@ class TrackingFlatEnvCfg(TrackingEnvCfg):
 
         # Command
         self.commands["motion"].motion_file = str(
-            ONEHBC_ROOT / "robot_assets/ths_23dof/motion_data/dance/dance1_subject2.pkl"
+            ONEHBC_ROOT / "robot_assets/ths_23dof/motion_data/dance/dance1_subject2_startstand.pkl"
         )
-        self.commands["motion"].anchor_body_name = "torso_link"
+        self.commands["motion"].anchor_body_name = "base_link"
         self.commands["motion"].body_names = (
             "base_link",
             "left_hip_roll_link",

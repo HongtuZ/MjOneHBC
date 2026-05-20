@@ -1,12 +1,15 @@
-import base64
-import io
 from collections import deque
+from copy import deepcopy
 from dataclasses import dataclass
 
-import joblib
 import numpy as np
 import onnx
 import onnxruntime as ort
+from scipy.spatial.transform import Rotation as R
+
+# -----------------------------------------------------------------------------
+#                              Observation Buffer
+# -----------------------------------------------------------------------------
 
 
 class ObsBuffer:
@@ -96,10 +99,55 @@ class ObsBuffer:
         return self._ready
 
 
+# -----------------------------------------------------------------------------
+#                               Onnx Policy
+# -----------------------------------------------------------------------------
+
+
+def parse_ndarray(csv_str: str | None, delimiter: str = ",") -> np.ndarray:
+    if csv_str:
+        return np.fromstring(csv_str, sep=delimiter, dtype=float)
+    else:
+        return np.array([])
+
+
+def parse_str_list(csv_str: str | None, delimiter: str = ",") -> list[str]:
+    if csv_str:
+        return [x.strip() for x in csv_str.split(delimiter) if x.strip() != ""]
+    else:
+        return []
+
+
+def normalize(x: np.ndarray, eps: float = 1e-9) -> np.ndarray:
+    norm = np.linalg.norm(x, ord=2, axis=-1, keepdims=True)
+    return x / np.clip(norm, a_min=eps, a_max=None)
+
+
+def yaw_quat(quat: np.ndarray) -> np.ndarray:
+    """Extract the yaw component of a quaternion.
+
+    Args:
+        quat: The orientation in (w, x, y, z). Shape is (..., 4)
+
+    Returns:
+        A quaternion with only yaw component.
+    """
+    shape = quat.shape
+    quat_yaw = quat.reshape(-1, 4)
+    qw = quat_yaw[:, 0]
+    qx = quat_yaw[:, 1]
+    qy = quat_yaw[:, 2]
+    qz = quat_yaw[:, 3]
+    yaw = np.arctan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz))
+    quat_yaw = np.zeros_like(quat_yaw)
+    quat_yaw[:, 3] = np.sin(yaw / 2)
+    quat_yaw[:, 0] = np.cos(yaw / 2)
+    quat_yaw = normalize(quat_yaw)
+    return quat_yaw.reshape(shape)
+
+
 class OnnxPolicy:
-    def __init__(
-        self, onnx_policy_path, is_velocity_command: bool = True, is_real_env: bool = True, use_gpu: bool = False
-    ):
+    def __init__(self, onnx_policy_path, is_real_env: bool = True, use_gpu: bool = False):
         self.onnx_policy_path = onnx_policy_path
         options = ort.SessionOptions()
         options.intra_op_num_threads = 4  # 2~4
@@ -115,41 +163,110 @@ class OnnxPolicy:
 
         self.session = ort.InferenceSession(onnx_policy_path, sess_options=options, providers=providers)
 
+        # Load metadata
+        onnx_model = onnx.load(self.onnx_policy_path)
+        metadata = {prop.key: prop.value for prop in onnx_model.metadata_props}
+        self.command_name = metadata.get("command_names", "base_velocity")
+        joint_names = parse_str_list(metadata.get("joint_names"))
+        joint_stiffness = parse_ndarray(metadata.get("joint_stiffness"))
+        joint_damping = parse_ndarray(metadata.get("joint_damping"))
+        default_joint_pos = parse_ndarray(metadata.get("default_joint_pos"))
+        action_scale = parse_ndarray(metadata.get("action_scale"))
+
+        # Used to create env
+        try:
+            self.action_joint_cfg = [
+                ActionJointCfg(
+                    joint_name=joint_names[i],
+                    default_joint_pos=default_joint_pos[i],
+                    kp=joint_stiffness[i],
+                    kd=joint_damping[i],
+                    scale=action_scale[i],
+                )
+                for i in range(len(joint_names))
+            ]
+        except Exception:
+            print(
+                "[Error]: Please check your onnx export, should include "
+                "[command_name, joint_names, joint_stiffness, joint_damping, default_joint_pos, action_scale] "
+                "in the onnx model metadata_props!"
+            )
+            exit()
+
         # Command
-        self.is_velocity_command = is_velocity_command
-        self.vel_x, self.vel_y, self.ang_vel_z = 1.0, 0.0, 0.0
-        self.step_t, self.ref_motion_length = 0, 0
-        self.ref_motion = self.load_ref_motion()
-        if self.ref_motion:
-            self.ref_motion_length = len(self.ref_motion[0])
+        if self.command_name == "motion":
+            self.motion_anchor_body_name = metadata.get("anchor_body_name", "base_link")
+            self.motion_body_names = parse_str_list(metadata.get("body_names"))
+            self.motion_step_t = 0
+            motion_keys = ["joint_pos", "joint_vel", "body_pos_w", "body_quat_w", "body_lin_vel_w", "body_ang_vel_w"]
+            self.motion = {}
+            for init in onnx_model.graph.initializer:
+                name = init.name.split(".")[0]
+                if name in motion_keys:
+                    self.motion[name] = onnx.numpy_helper.to_array(init)
+            motion_anchor_body_idx = self.motion_body_names.index(self.motion_anchor_body_name)
+            self.motion_joint_pos = self.motion["joint_pos"].copy()
+            self.motion_joint_vel = self.motion["joint_vel"].copy()
+            self.motion_anchor_pos_w = self.motion["body_pos_w"][:, motion_anchor_body_idx].copy()
+            self.motion_anchor_quat_w = self.motion["body_quat_w"][:, motion_anchor_body_idx].copy()
+        else:
+            self.vel_x, self.vel_y, self.ang_vel_z = 0.0, 0.0, 0.0
 
     def get_action(self, obs):
-        return self.session.run(None, {self.session.get_inputs()[0].name: obs.reshape(1, -1)})[0].squeeze()
-
-    def get_command(self):
-        if self.is_velocity_command:
-            return {"velocity_command": np.array([self.vel_x, self.vel_y, self.ang_vel_z])}
+        if self.command_name == "motion":
+            return self.session.run(
+                None,
+                {
+                    self.session.get_inputs()[0].name: obs.reshape(1, -1),
+                    self.session.get_inputs()[1].name: np.array([[self.motion_step_t]], dtype=np.float32),
+                },
+            )[0].squeeze()
         else:
-            step_t = min(self.ref_motion_length - 1, self.step_t)
+            return self.session.run(None, {self.session.get_inputs()[0].name: obs.reshape(1, -1)})[0].squeeze()
+
+    def get_command(self, robot_quat=None):
+        if self.command_name == "motion":
+            if robot_quat is None:
+                raise ValueError("robot_quat is needed when command is motion!")
+            step_t = min(self.motion["joint_pos"].shape[0] - 1, self.motion_step_t)
+            robot_rot = R.from_quat(robot_quat, scalar_first=True)
+            motion_rot = R.from_quat(self.motion_anchor_quat_w[step_t], scalar_first=True)
+            delta_rot = robot_rot.inv() * motion_rot
             motion_command = {
-                "ref_joint_pos": self.ref_motion["joint_pos"][step_t],
-                "ref_joint_vel": self.ref_motion["joint_vel"][step_t],
-                "ref_base_pos_b": self.ref_motion["base_pos_b"][step_t],
+                "motion_command": np.concatenate(
+                    [self.motion_joint_pos[step_t], self.motion_joint_vel[step_t]], axis=-1
+                ),
+                "motion_anchor_pos_w": self.motion_anchor_pos_w[step_t],
+                "motion_anchor_quat_w": self.motion_anchor_quat_w[step_t],
+                "motion_anchor_ori_b": delta_rot.as_matrix()[..., :2].reshape(-1),
+                "ref_motion": {
+                    "base_pos": self.motion_anchor_pos_w[step_t],
+                    "base_quat": self.motion_anchor_quat_w[step_t],
+                    "joint_pos": self.motion_joint_pos[step_t],
+                },
             }
-            self.step_t += 1
+            self.motion_step_t += 1
             return motion_command
+        else:
+            return {"velocity_command": np.array([self.vel_x, self.vel_y, self.ang_vel_z])}
 
-    def reset(self):
-        self.vel_x, self.vel_y, self.ang_vel_z = 1.0, 0.0, 0.0
-        self.step_t = 0
-
-    def load_ref_motion(self):
-        onnx_model = onnx.load(self.onnx_policy_path)
-        for prop in onnx_model.metadata_props:
-            if prop.key == "ref_motion":
-                buffer = io.BytesIO(base64.b64decode(prop.value.encode("ascii")))
-                return joblib.load(buffer)
-        return None
+    def reset(self, robot_pos=None, robot_quat=None):
+        # robot_pos (xyz), robot_quat (wxyz): used to compute mition command
+        if self.command_name == "motion":
+            self.motion_step_t = 0
+            robot_rot = R.from_quat(robot_quat, scalar_first=True)
+            motion_anchor_rot = R.from_quat(self.motion_anchor_quat_w[self.motion_step_t], scalar_first=True)
+            delta_rot = R.from_quat(
+                yaw_quat((robot_rot * motion_anchor_rot.inv()).as_quat(scalar_first=True)), scalar_first=True
+            )
+            self.motion_anchor_pos_w[:, :2] -= self.motion_anchor_pos_w[self.motion_step_t, :2]
+            self.motion_anchor_pos_w = delta_rot.apply(self.motion_anchor_pos_w)
+            self.motion_anchor_pos_w[:, :2] += robot_pos[:2]
+            self.motion_anchor_quat_w = (delta_rot * R.from_quat(self.motion_anchor_quat_w, scalar_first=True)).as_quat(
+                scalar_first=True
+            )
+        else:
+            self.vel_x, self.vel_y, self.ang_vel_z = 1.0, 0.0, 0.0
 
 
 @dataclass

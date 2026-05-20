@@ -27,7 +27,7 @@ class MujocoEnv:
         self.kd = np.array([aj_cfg.kd for aj_cfg in action_joint_cfg], dtype=float)
         self.action_scale = np.array([aj_cfg.scale for aj_cfg in action_joint_cfg], dtype=float)
         self.action_clip = np.array(
-            [(np.inf, np.inf) if not aj_cfg.clip else aj_cfg.clip for aj_cfg in action_joint_cfg], dtype=float
+            [(-np.inf, np.inf) if not aj_cfg.clip else aj_cfg.clip for aj_cfg in action_joint_cfg], dtype=float
         )
         # Load model
         self.xml_path = xml_path
@@ -136,11 +136,14 @@ class MujocoEnv:
         time.sleep(max(0, self.dt * self.decimation - duration))
 
         # return info
-        base_rot_inv = R.from_quat(self.data.qpos[3:7], scalar_first=True).inv()
+        base_quat = self.data.qpos[3:7]
+        base_rot_inv = R.from_quat(base_quat, scalar_first=True).inv()
         base_ang_vel = base_rot_inv.apply(self.data.qvel[3:6])
         projected_gravity = base_rot_inv.apply(np.array([0, 0, -9.81]))
         projected_gravity = projected_gravity / np.linalg.norm(projected_gravity)
         obs_info = {
+            "robot_pos": self.data.qpos[:3],
+            "robot_quat": base_quat,
             "base_ang_vel": base_ang_vel,
             "projected_gravity": projected_gravity,
             "joint_pos": self.data.qpos[self.jnt_qpos_indices] - self.default_joint_pos,
@@ -180,7 +183,7 @@ class MujocoEnv:
             qpos = np.zeros(self.ghost_model.nq)
             qpos[:3] = ref_motion["base_pos"]
             qpos[3:7] = ref_motion["base_quat"]
-            qpos[:] = ref_motion["joint_pos"]
+            qpos[self.jnt_qpos_indices] = ref_motion["joint_pos"]
             self.debug_visualizer.add_ghost_mesh(
                 qpos,
                 model=self.ghost_model,
@@ -190,11 +193,14 @@ class MujocoEnv:
         mj.mj_resetData(self.model, self.data)
         self.data.qpos[self.jnt_qpos_indices] = self.default_joint_pos
         mj.mj_forward(self.model, self.data)
-        base_rot_inv = R.from_quat(self.data.qpos[3:7], scalar_first=True).inv()
-        base_ang_vel = base_rot_inv.apply(self.data.qvel[3:6])
-        projected_gravity = base_rot_inv.apply(np.array([0, 0, -9.81]))
+        base_quat = self.data.qpos[3:7]
+        base_rot = R.from_quat(base_quat, scalar_first=True)
+        base_ang_vel = base_rot.inv().apply(self.data.qvel[3:6])
+        projected_gravity = base_rot.inv().apply(np.array([0, 0, -9.81]))
         projected_gravity = projected_gravity / np.linalg.norm(projected_gravity)
         return {
+            "robot_pos": self.data.qpos[:3],
+            "robot_quat": base_quat,
             "base_ang_vel": base_ang_vel,
             "projected_gravity": projected_gravity,
             "joint_pos": self.data.qpos[self.jnt_qpos_indices] - self.default_joint_pos,
