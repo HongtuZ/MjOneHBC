@@ -3,7 +3,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, cast
 
 import torch
-
+from mjlab.entity import Entity
+from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.sensor import ContactSensor
 from mjlab.utils.lab_api.math import quat_error_magnitude
 
@@ -90,6 +91,23 @@ def motion_global_body_angular_velocity_error_exp(
         dim=-1,
     )
     return torch.exp(-error.mean(-1) / std**2)
+
+
+def ankle_torque_penalty(
+    env: ManagerBasedRlEnv,
+    asset_cfg: SceneEntityCfg,
+    threshold: float = 2.0,
+) -> torch.Tensor:
+    """Penalize ankle roll torque exceeding a threshold with a flat penalty.
+
+    Hard constraint: any actuator whose absolute torque exceeds *threshold*
+    incurs a penalty of 1.0, summed across all specified actuators.
+    Zero penalty when all actuators are within the threshold.
+    """
+    asset: Entity = env.scene[asset_cfg.name]
+    torque = asset.data.qfrc_actuator[:, asset_cfg.actuator_ids]  # [B, num_actuators]
+    violation = (torch.abs(torque) > threshold).float()
+    return violation.sum(dim=1)
 
 
 def self_collision_cost(

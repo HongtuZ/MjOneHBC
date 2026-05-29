@@ -3,31 +3,23 @@
 from copy import deepcopy
 from dataclasses import dataclass
 
-from mjlab.envs import ManagerBasedRlEnvCfg
-from mjlab.envs import mdp as envs_mdp
-from mjlab.envs.mdp.actions import JointPositionActionCfg
-from mjlab.managers.event_manager import EventTermCfg
-from mjlab.managers.observation_manager import ObservationGroupCfg, ObservationTermCfg
-from mjlab.managers.reward_manager import RewardTermCfg
-from mjlab.managers.scene_entity_config import SceneEntityCfg
-from mjlab.managers.termination_manager import TerminationTermCfg
 from mjlab.sensor import (
     ContactMatch,
     ContactSensorCfg,
-    ObjRef,
-    RayCastSensorCfg,
-    RingPatternCfg,
-    TerrainHeightSensorCfg,
 )
-from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
-from mjlab.tasks.velocity.velocity_env_cfg import make_velocity_env_cfg
 from mjlab.terrains import BoxFlatTerrainCfg, HfRandomUniformTerrainCfg, TerrainGeneratorCfg
-from mjlab.utils.noise import UniformNoiseCfg as Unoise
 
-import OneHBC.tasks.tracking.mdp as mdp
 from OneHBC import ONEHBC_ROOT
 from OneHBC.assets.robots import THS23DOF_ACTION_SCALE, THS23DOF_CFG
 from OneHBC.tasks.tracking.tracking_env_cfg import TrackingEnvCfg
+
+# -----------------------------------------------------------------------------
+#                                  Motions
+# -----------------------------------------------------------------------------
+
+dance_motion_file = str(ONEHBC_ROOT / "robot_assets/ths_23dof/motion_data/dance/dance1_subject2_startstand.pkl")
+getup_motion_file = str(ONEHBC_ROOT / "robot_assets/ths_23dof/motion_data/getup/paziqishen_endextend.pkl")
+falldown_motion_file = str(ONEHBC_ROOT / "robot_assets/ths_23dof/motion_data/falldown/daodi_000_extended.pkl")
 
 # -----------------------------------------------------------------------------
 #                                   Sensors
@@ -49,16 +41,18 @@ self_collision_cfg = ContactSensorCfg(
 
 half_rough_terrain_cfg = TerrainGeneratorCfg(
     size=(5.0, 5.0),
+    border_width=20.0,
     num_rows=40,
     num_cols=40,
-    curriculum=True,
+    # curriculum=True,
+    color_scheme="none",
     difficulty_range=(0.0, 1.0),
     add_lights=True,
     sub_terrains={
         "flat": BoxFlatTerrainCfg(proportion=0.5),
         "rough": HfRandomUniformTerrainCfg(
             proportion=0.5,
-            noise_range=(0, 0.05),
+            noise_range=(0, 0.035),
             noise_step=0.0025,
             downsampled_scale=0.1,
             border_width=0.0,
@@ -91,6 +85,8 @@ class TrackingFlatEnvCfg(TrackingEnvCfg):
 
         # Event
         self.events["base_com"].params["asset_cfg"].body_names = ("torso_link",)
+        self.events["base_mass"].params["asset_cfg"].body_names = ("torso_link",)
+        self.events["body_mass"].params["asset_cfg"].body_names = ("left_.*_link", "right_.*_link")
         self.events["foot_friction"].params["asset_cfg"].geom_names = r"^(left|right)_foot[1-5]_collision$"
 
         # MDP
@@ -102,9 +98,7 @@ class TrackingFlatEnvCfg(TrackingEnvCfg):
         self.terminations["ee_body_pos"].params["body_names"] = (".*_ankle_roll_link", ".*_wrist_roll_link")
 
         # Command
-        self.commands["motion"].motion_file = str(
-            ONEHBC_ROOT / "robot_assets/ths_23dof/motion_data/dance/dance1_subject2_startstand.pkl"
-        )
+        self.commands["motion"].motion_file = dance_motion_file
         self.commands["motion"].anchor_body_name = "base_link"
         self.commands["motion"].body_names = (
             "base_link",
@@ -132,6 +126,7 @@ class TrackingFlatPlayEnvCfg(TrackingFlatEnvCfg):
 
         self.observations["actor"].enable_corruption = False
         self.events.pop("push_robot", None)
+        self.events["foot_friction"].params["ranges"] = (1.5, 1.5)
 
         # Disable RSI randomization.
         self.commands["motion"].pose_range = {}
@@ -150,6 +145,105 @@ class TrackingRoughEnvCfg(TrackingFlatEnvCfg):
 
 @dataclass(kw_only=True)
 class TrackingRoughPlayEnvCfg(TrackingRoughEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.episode_length_s = int(1e9)
+
+        self.observations["actor"].enable_corruption = False
+        self.events.pop("push_robot", None)
+
+        # Disable RSI randomization for deterministic inspection.
+        self.commands["motion"].pose_range = {}
+        self.commands["motion"].velocity_range = {}
+        self.commands["motion"].sampling_mode = "start"
+
+
+@dataclass(kw_only=True)
+class GetupTrackingFlatEnvCfg(TrackingFlatEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+
+        # Replace the default motion with a getup motion.
+        self.commands["motion"].motion_file = getup_motion_file
+
+        # Remove some termination conditions
+        self.terminations.pop("base_height", None)
+
+
+@dataclass(kw_only=True)
+class GetupTrackingFlatPlayEnvCfg(GetupTrackingFlatEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.episode_length_s = int(1e9)
+
+        self.observations["actor"].enable_corruption = False
+        self.events.pop("push_robot", None)
+
+        # Disable RSI randomization for deterministic inspection.
+        self.commands["motion"].pose_range = {}
+        self.commands["motion"].velocity_range = {}
+        self.commands["motion"].sampling_mode = "start"
+
+
+@dataclass(kw_only=True)
+class GetupTrackingRoughEnvCfg(GetupTrackingFlatEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        assert self.scene.terrain is not None
+        self.scene.terrain.terrain_type = "generator"
+        self.scene.terrain.terrain_generator = deepcopy(half_rough_terrain_cfg)
+
+
+@dataclass(kw_only=True)
+class GetupTrackingRoughPlayEnvCfg(GetupTrackingRoughEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.episode_length_s = int(1e9)
+
+        self.observations["actor"].enable_corruption = False
+        self.events.pop("push_robot", None)
+
+        # Disable RSI randomization for deterministic inspection.
+        self.commands["motion"].pose_range = {}
+        self.commands["motion"].velocity_range = {}
+        self.commands["motion"].sampling_mode = "start"
+
+
+@dataclass(kw_only=True)
+class FalldownTrackingFlatEnvCfg(GetupTrackingFlatEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+
+        # Replace the default motion with a getup motion.
+        self.commands["motion"].motion_file = falldown_motion_file
+
+
+@dataclass(kw_only=True)
+class FalldownTrackingFlatPlayEnvCfg(FalldownTrackingFlatEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.episode_length_s = int(1e9)
+
+        self.observations["actor"].enable_corruption = False
+        self.events.pop("push_robot", None)
+
+        # Disable RSI randomization for deterministic inspection.
+        self.commands["motion"].pose_range = {}
+        self.commands["motion"].velocity_range = {}
+        self.commands["motion"].sampling_mode = "start"
+
+
+@dataclass(kw_only=True)
+class FalldownTrackingRoughEnvCfg(FalldownTrackingFlatEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        assert self.scene.terrain is not None
+        self.scene.terrain.terrain_type = "generator"
+        self.scene.terrain.terrain_generator = deepcopy(half_rough_terrain_cfg)
+
+
+@dataclass(kw_only=True)
+class FalldownTrackingRoughPlayEnvCfg(FalldownTrackingRoughEnvCfg):
     def __post_init__(self):
         super().__post_init__()
         self.episode_length_s = int(1e9)

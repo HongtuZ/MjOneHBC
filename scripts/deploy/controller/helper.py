@@ -1,5 +1,4 @@
 from collections import deque
-from copy import deepcopy
 from dataclasses import dataclass
 
 import numpy as np

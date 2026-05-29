@@ -69,7 +69,7 @@
             <site name="imu" size="0.01" pos="0 0 0"/>
             <body name="left_hip_pitch_link" pos="0 0.058 -0.069">
                 <inertial pos="-0.004492 0.056734 0" quat="0.707066 0.707066 0.00762079 0.00762079" mass="1.06717" diaginertia="0.00139624 0.001034 0.000885763" />
-                <joint name="left_hip_pitch_joint" pos="0 0 0" axis="0 -1 0" limited="true" range="-1 1.3" class="E03"/>
+                <joint name="left_hip_pitch_joint" pos="0 0 0" axis="0 -1 0" limited="true" range="-1 2.6" class="E03"/>
                 <geom class="visual" material="black" mesh="left_hip_pitch_link" />
                 <body name="left_hip_roll_link" pos="0.00475 0.062 0">
                     <inertial pos="0.015477 0 -0.044856" quat="0.989721 0 0.143015 0" mass="0.253419" diaginertia="0.000501631 0.00044 0.000144369" />
@@ -83,7 +83,7 @@
                         <geom name="left_hip_yaw_collision" class="collision" size="0.05" fromto="0 0 -0.033 0 0 -0.135"/>
                         <body name="left_knee_link" pos="0 0.00475 -0.211">
                             <inertial pos="-0.005982 0.00056 -0.132827" quat="0.590877 -0.0322568 0.0406109 0.805093" mass="0.979091" diaginertia="0.00625483 0.00609581 0.000686368" />
-                            <joint name="left_knee_joint" pos="0 0 0" axis="0 -1 0" limited="true" range="-2 0.3" class="E03"/>
+                            <joint name="left_knee_joint" pos="0 0 0" axis="0 -1 0" limited="true" range="-2.4 0.3" class="E03"/>
                             <geom class="visual" material="black" mesh="left_knee_link"/>
                             <geom name="left_knee1_collision" class="collision" size="0.05" fromto="0 0 -0.033 0 0 -0.135"/>
                             <geom name="left_knee2_collision" class="collision" size="0.028" fromto="0 -0.005 -0.23 0 -0.005 -0.3"/>
@@ -109,7 +109,7 @@
             </body>
             <body name="right_hip_pitch_link" pos="0 -0.058 -0.069">
                 <inertial pos="-0.004492 -0.056734 0" quat="0.707066 0.707066 -0.00762079 -0.00762079" mass="1.06717" diaginertia="0.00139624 0.001034 0.000885763" />
-                <joint name="right_hip_pitch_joint" pos="0 0 0" axis="0 1 0" limited="true" range="-1.3 1" class="E03"/>
+                <joint name="right_hip_pitch_joint" pos="0 0 0" axis="0 1 0" limited="true" range="-2.6 1" class="E03"/>
                 <geom class="visual" material="black" mesh="right_hip_pitch_link" />
                 <body name="right_hip_roll_link" pos="0.00475 -0.062 0">
                     <inertial pos="0.015477 0 -0.044856" quat="0.989721 0 0.143015 0" mass="0.25342" diaginertia="0.000501631 0.00044 0.000144369" />
@@ -123,7 +123,7 @@
                         <geom name="right_hip_yaw_collision" class="collision" size="0.05" fromto="0 0 -0.033 0 0 -0.135"/>
                         <body name="right_knee_link" pos="0 -0.00475 -0.211">
                             <inertial pos="-0.005892 -0.000547 -0.132826" quat="0.803357 0.0400782 -0.0329901 0.593231" mass="0.979665" diaginertia="0.00625219 0.00609454 0.00068627" />
-                            <joint name="right_knee_joint" pos="0 0 0" axis="0 1 0" limited="true" range="-0.3 2" class="E03"/>
+                            <joint name="right_knee_joint" pos="0 0 0" axis="0 1 0" limited="true" range="-0.3 2.4" class="E03"/>
                             <geom class="visual" material="black" mesh="right_knee_link"/>
                             <geom name="right_knee1_collision" class="collision" size="0.05" fromto="0 0 -0.033 0 0 -0.135"/>
                             <geom name="right_knee2_collision" class="collision" size="0.028" fromto="0 0.005 -0.23 0 0.005 -0.3"/>
@@ -176,6 +176,7 @@
                                     <inertial pos="5.4e-05 -0.000374 4e-06" quat="0.707107 0 0 0.707107" mass="0.044004" diaginertia="2e-05 1.4e-05 1e-05" />
                                     <joint name="left_wrist_roll_joint" pos="0 0 0" axis="0 -1 0" limited="true" range="-1.8 1.8" class="E00"/>
                                     <geom class="visual" material="black" mesh="left_wrist_roll_link" />
+                                    <geom name="left_wrist_collision" class="collision" type="sphere" size="0.04" pos="0 0.09 0"/>
                                 </body>
                             </body>
                         </body>
@@ -203,6 +204,7 @@
                                     <inertial pos="-5.4e-05 0.000374 4e-06" quat="0.707107 0 0 0.707107" mass="0.044004" diaginertia="2e-05 1.4e-05 1e-05" />
                                     <joint name="right_wrist_roll_joint" pos="0 0 0" axis="0 1 0" limited="true" range="-1.8 1.8" class="E00"/>
                                     <geom class="visual" material="black" mesh="right_wrist_roll_link" />
+                                    <geom name="right_wrist_collision" class="collision" type="sphere" size="0.04" pos="0 -0.09 0"/>
                                 </body>
                             </body>
                         </body>

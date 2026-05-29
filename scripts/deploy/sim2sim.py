@@ -1,101 +1,71 @@
 import argparse
-import sys
 from pathlib import Path
 
-from helper import ObsBuffer, OnnxPolicy
+import numpy as np
+from controller.base_controller import BaseRobotController
 from mujoco_env.mj_env import MujocoEnv
 
-# ==================== noqa ====================
-deploy_dir = Path(__file__).resolve().parent
-if str(deploy_dir) not in sys.path:
-    sys.path.insert(0, str(deploy_dir))
 
+class SimController(BaseRobotController):
+    """
+    MuJoCo 键盘 + 可选手柄.
+    手柄在 _on_step_end 中轮询.
+    """
 
-# ==================== 主仿真 ====================
-def main(xml_path: str, model_path: str):
-    finish_sim = False
+    def __init__(self, xml_path: str, model_path: str, obs_names=None, use_joystick=False):
+        self.xml_path = xml_path
+        self._init_pos, self._init_quat = self._resolve_init_pose(model_path)
 
-    # Create onnx policy
-    policy = OnnxPolicy(onnx_policy_path=model_path, is_real_env=False)
+        # 可选：同时接入手柄
+        self.joystick = None
+        if use_joystick:
+            from ths_real_env import JoystickReader
 
-    def keyboard_callback(keycode):
-        nonlocal finish_sim, policy
-        if keycode == 256:  # ESC
-            finish_sim = True
-        if policy.command_name == "motion":
-            if chr(keycode) == " ":  # 空格
-                policy.motion_step_t = 0
-            pass
-        else:
-            if chr(keycode) == " ":  # 空格
-                policy.vel_x, policy.vel_y, policy.ang_vel_z = 0.0, 0.0, 0.0
-            if keycode == 265:  # 箭头上
-                policy.vel_x += 0.1
-            if keycode == 264:  # 箭头下
-                policy.vel_x -= 0.1
-            # if keycode == 263:  # 箭头左
-            #     policy.vel_y -= 0.1
-            # if keycode == 262:  # 箭头右
-            #     policy.vel_y += 0.1
-            if keycode == 263:
-                policy.ang_vel_z += 0.1
-            if keycode == 262:
-                policy.ang_vel_z -= 0.1
+            self.joystick = JoystickReader(cpu_id=1)
 
-    # Create mujoco env
-    env = MujocoEnv(
-        xml_path=xml_path,
-        sim_dt=0.005,
-        decimation=4,
-        action_joint_cfg=policy.action_joint_cfg,
-        keyboard_callback=keyboard_callback,
-    )
-    # Create observation buffer
-    if policy.command_name == "motion":
-        obs_buffer = ObsBuffer(
-            obs_names=[
-                "motion_command",
-                "motion_anchor_ori_b",
-                "base_ang_vel",
-                "joint_pos",
-                "joint_vel",
-                "last_action",
-            ],
-            history_length=1,
-            concatenate=True,
-        )
-    else:
-        obs_buffer = ObsBuffer(
-            obs_names=[
-                "base_ang_vel",
-                "projected_gravity",
-                "velocity_command",
-                "joint_pos",
-                "joint_vel",
-                "last_action",
-            ],
-            history_length=1,
-            concatenate=True,
+        super().__init__(model_path, obs_names)
+
+    def _resolve_init_pose(self, model_path: str) -> tuple[tuple[float, ...], tuple[float, ...]]:
+        if "getup" in model_path:
+            return (0.0, 0.0, 0.15), (0.70710678, 0.0, 0.70710678, 0.0)
+        return (0.0, 0.0, 0.75), (1.0, 0.0, 0.0, 0.0)
+
+    def _create_env(self):
+        return MujocoEnv(
+            xml_path=self.xml_path,
+            sim_dt=0.005,
+            decimation=4,
+            action_joint_cfg=self.policy.action_joint_cfg,
+            keyboard_callback=self.handle_keyboard,
         )
 
-    # Run
-    obs_info = env.reset()
-    policy.reset(robot_pos=obs_info.get("robot_pos"), robot_quat=obs_info.get("robot_quat"))
-    while not finish_sim:
-        obs_info.update(policy.get_command(obs_info.get("robot_quat")))
-        obs_buffer.push(obs_info)
-        obs = obs_buffer.get_obs()
-        action = policy.get_action(obs)
-        env.show_command(velocity_command=obs_info.get("velocity_command"), ref_motion=obs_info.get("ref_motion"))
-        obs_info, done = env.step(action)
-        if done:
-            break
-    env.close()
+    def _reset_env(self) -> dict[str, np.ndarray | list | tuple]:
+        return self.env.reset(root_pos=self._init_pos, root_quat=self._init_quat)
+
+    def _on_step_start(self) -> None:
+        """在 env.step 之前更新可视化."""
+        self.env.show_command(
+            velocity_command=self._obs_info.get("velocity_command"),
+            ref_motion=self._obs_info.get("ref_motion"),
+        )
+
+    def _on_step_end(self) -> None:
+        """轮询手柄（如果已连接）."""
+        if self.joystick is not None:
+            self.handle_joystick(self.joystick.state)
+
+    def close(self) -> None:
+        if self.joystick is not None:
+            self.joystick.close()
+        super().close()
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--xml", type=str, default="robot_assets/ths_23dof/urdf/ths_23dof.xml")
     parser.add_argument("--model", type=str, required=True)
     args = parser.parse_args()
-    main(args.xml, args.model)
+
+    ROOT_DIR = Path(__file__).resolve().parents[2]
+    xml_path = ROOT_DIR / "robot_assets/ths_23dof/urdf/ths_23dof.xml"
+    controller = SimController(xml_path=str(xml_path), model_path=args.model, use_joystick=False)
+    controller.run()

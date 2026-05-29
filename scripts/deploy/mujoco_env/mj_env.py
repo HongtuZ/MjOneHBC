@@ -4,7 +4,7 @@ import time
 import mujoco as mj
 import mujoco.viewer as mjv
 import numpy as np
-from helper import ActionJointCfg, normalize
+from controller.helper import ActionJointCfg, normalize
 from scipy.spatial.transform import Rotation as R
 
 from mujoco_env.visualizer import MujocoDebugVisualizer
@@ -189,8 +189,12 @@ class MujocoEnv:
                 model=self.ghost_model,
             )
 
-    def reset(self):
+    def reset(self, root_pos=None, root_quat=None):
         mj.mj_resetData(self.model, self.data)
+        if root_pos is not None:
+            self.data.qpos[:3] = root_pos
+        if root_quat is not None:
+            self.data.qpos[3:7] = root_quat
         self.data.qpos[self.jnt_qpos_indices] = self.default_joint_pos
         mj.mj_forward(self.model, self.data)
         base_quat = self.data.qpos[3:7]

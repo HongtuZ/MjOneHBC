@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, cast
 
 import torch
-
 from mjlab.utils.lab_api.math import quat_apply_inverse
 
 from .commands import MotionCommand
@@ -65,3 +64,19 @@ def bad_motion_body_pos_z_only(
     body_indexes = _get_body_indexes(command, body_names)
     error = torch.abs(command.body_pos_relative_w[:, body_indexes, -1] - command.robot_body_pos_w[:, body_indexes, -1])
     return torch.any(error > threshold, dim=-1)
+
+
+def joint_pos_limits_exceeded(
+    env: ManagerBasedRlEnv,
+    asset_cfg: SceneEntityCfg,
+) -> torch.Tensor:
+    """终止：当任何关节超过其在 MJCF 中定义的硬限位时。"""
+    asset: Entity = env.scene[asset_cfg.name]
+
+    joint_pos = asset.data.joint_pos[:, asset_cfg.joint_ids]
+    limits = asset.data.joint_pos_limits[:, asset_cfg.joint_ids]
+
+    lower_violated = joint_pos < limits[..., 0]
+    upper_violated = joint_pos > limits[..., 1]
+
+    return torch.any(lower_violated | upper_violated, dim=1)

@@ -1,26 +1,17 @@
-import math
 from copy import deepcopy
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp import dr
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers.action_manager import ActionTermCfg
 from mjlab.managers.command_manager import CommandTermCfg
-from mjlab.managers.curriculum_manager import CurriculumTermCfg
 from mjlab.managers.event_manager import EventTermCfg
-from mjlab.managers.metrics_manager import MetricsTermCfg
 from mjlab.managers.observation_manager import ObservationGroupCfg, ObservationTermCfg
 from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.managers.termination_manager import TerminationTermCfg
 from mjlab.scene import SceneCfg
-from mjlab.sensor import (
-    GridPatternCfg,
-    ObjRef,
-    RayCastSensorCfg,
-    TerrainHeightSensorCfg,
-)
 from mjlab.sim import MujocoCfg, SimulationCfg
 from mjlab.tasks.velocity import mdp
 from mjlab.terrains import TerrainEntityCfg
@@ -132,20 +123,68 @@ events = {
     "push_robot": EventTermCfg(
         func=mdp.push_by_setting_velocity,
         mode="interval",
-        interval_range_s=(1.0, 3.0),
+        interval_range_s=(3.0, 5.0),
         params={"velocity_range": VELOCITY_RANGE},
     ),
     "base_com": EventTermCfg(
         mode="startup",
         func=dr.body_com_offset,
         params={
-            "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set in robot cfg.
+            "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
             "operation": "add",
             "ranges": {
-                0: (-0.025, 0.025),
+                0: (-0.03, 0.03),
                 1: (-0.05, 0.05),
                 2: (-0.05, 0.05),
             },
+        },
+    ),
+    "base_mass": EventTermCfg(
+        mode="startup",
+        func=dr.body_mass,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
+            "operation": "add",
+            "ranges": (-3.0, 3.0),
+        },
+    ),
+    "body_mass": EventTermCfg(
+        mode="startup",
+        func=dr.body_mass,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
+            "operation": "scale",
+            "ranges": (0.8, 1.2),
+        },
+    ),
+    "reset_base": EventTermCfg(
+        mode="reset",
+        func=mdp.reset_root_state_uniform,
+        params={
+            "pose_range": {
+                "x": (-0.5, 0.5),
+                "y": (-0.5, 0.5),
+                "z": (0.0, 0.0),  # Z 不随机（由地形决定）
+                "roll": (-0.1, 0.1),
+                "pitch": (-0.1, 0.1),
+                "yaw": (-3.14, 3.14),  # 偏航角完全随机
+            },
+            "velocity_range": {
+                "x": (-0.2, 0.2),
+                "y": (-0.2, 0.2),
+                "z": (-0.1, 0.1),
+                "roll": (-0.2, 0.2),
+                "pitch": (-0.2, 0.2),
+                "yaw": (-0.2, 0.2),
+            },
+        },
+    ),
+    "reset_joints": EventTermCfg(
+        mode="reset",
+        func=mdp.reset_joints_by_offset,
+        params={
+            "position_range": (-0.1, 0.1),  # 关节位置偏移 ±0.1 rad
+            "velocity_range": (-0.01, 0.01),  # 关节速度初始化为接近 0
         },
     ),
     "encoder_bias": EventTermCfg(
@@ -162,7 +201,7 @@ events = {
         params={
             "asset_cfg": SceneEntityCfg("robot", geom_names=()),  # Set per-robot.
             "operation": "abs",
-            "ranges": (0.3, 1.2),
+            "ranges": (0.2, 2.0),
             "shared_random": True,  # All foot geoms share the same friction.
         },
     ),
@@ -189,22 +228,22 @@ rewards = {
     # -- task rewards
     "motion_global_root_pos": RewardTermCfg(
         func=mdp.motion_global_anchor_position_error_exp,
-        weight=2.5,
+        weight=1.5,
         params={"command_name": "motion", "std": 0.3},
     ),
     "motion_global_root_ori": RewardTermCfg(
         func=mdp.motion_global_anchor_orientation_error_exp,
-        weight=1.5,
+        weight=1.0,
         params={"command_name": "motion", "std": 0.4},
     ),
     "motion_body_pos": RewardTermCfg(
         func=mdp.motion_relative_body_position_error_exp,
-        weight=1.0,
+        weight=2.0,
         params={"command_name": "motion", "std": 0.3},
     ),
     "motion_body_ori": RewardTermCfg(
         func=mdp.motion_relative_body_orientation_error_exp,
-        weight=1.0,
+        weight=2.0,
         params={"command_name": "motion", "std": 0.4},
     ),
     "motion_body_lin_vel": RewardTermCfg(
@@ -227,9 +266,17 @@ rewards = {
 
 terminations = {
     "time_out": TerminationTermCfg(func=mdp.time_out, time_out=True),
+    "base_height": TerminationTermCfg(
+        func=mdp.root_height_below_minimum,
+        params={"minimum_height": 0.15},
+    ),
+    # "bad_orientation": TerminationTermCfg(
+    #     func=mdp.bad_orientation,
+    #     params={"limit_angle": math.radians(60.0)},
+    # ),
     "anchor_pos": TerminationTermCfg(
         func=mdp.bad_anchor_pos_z_only,
-        params={"command_name": "motion", "threshold": 0.25},
+        params={"command_name": "motion", "threshold": 0.35},
     ),
     "anchor_ori": TerminationTermCfg(
         func=mdp.bad_anchor_ori,
@@ -243,9 +290,13 @@ terminations = {
         func=mdp.bad_motion_body_pos_z_only,
         params={
             "command_name": "motion",
-            "threshold": 0.25,
+            "threshold": 0.35,
             "body_names": (),  # Set per-robot.
         },
+    ),
+    "joint_limits": TerminationTermCfg(
+        func=mdp.joint_pos_limits_exceeded,
+        params={"asset_cfg": SceneEntityCfg("robot")},
     ),
 }
 
@@ -295,4 +346,4 @@ class TrackingEnvCfg(ManagerBasedRlEnvCfg):
         ),
     )
     decimation: int = 4
-    episode_length_s: float = 10.0
+    episode_length_s: float = 20.0

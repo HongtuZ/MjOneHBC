@@ -1,0 +1,403 @@
+from dataclasses import dataclass
+
+import numpy as np
+
+
+@dataclass
+class MotorConfig:
+    motor_id: int
+    joint_name: str
+    bus_name: str
+    default_pos: float = 0.0
+    p_min: float = -12.57
+    p_max: float = 12.57
+    v_min: float = -20.0
+    v_max: float = 20.0
+    t_min: float = -60.0
+    t_max: float = 60.0
+    kp_min: float = 0.0
+    kp_max: float = 5000.0
+    kd_min: float = 0.0
+    kd_max: float = 100.0
+    default_kp: float = 80.0
+    default_kd: float = 2.0
+    joint_pmin: float = -2.0
+    joint_pmax: float = 2.0
+
+
+# ── 预计算 PD 参数 ──
+_ARM_E00 = 0.001 * 2
+_ARM_E02 = 0.0042
+_ARM_E03 = 0.02
+_ARM_E06 = 0.012
+_W = 10 * 2.0 * np.pi  # 62.83
+
+P_E00 = _ARM_E00 * _W**2  # ≈ 7.90
+P_E02 = _ARM_E02 * _W**2  # ≈ 16.58
+P_E03 = _ARM_E03 * _W**2  # ≈ 78.96
+P_E06 = _ARM_E06 * _W**2  # ≈ 47.37
+
+D_E00 = 2.0 * 2.0 * _ARM_E00 * _W  # ≈ 0.50
+D_E02 = 2.0 * 2.0 * _ARM_E02 * _W  # ≈ 1.06
+D_E03 = 2.0 * 2.0 * _ARM_E03 * _W  # ≈ 5.03
+D_E06 = 2.0 * 2.0 * _ARM_E06 * _W  # ≈ 3.02
+
+
+# ═══════════════════════════════════════════════════
+# 23 个电机配置
+# ═══════════════════════════════════════════════════
+
+THS_MOTORS = [
+    # ─────────────── can0: 左腿 6 个 ───────────────
+    MotorConfig(
+        motor_id=0x01,
+        joint_name="left_hip_yaw",
+        bus_name="can0",
+        v_min=-20.0,
+        v_max=20.0,
+        t_min=-60.0,
+        t_max=60.0,
+        kp_max=5000.0,
+        kd_max=100.0,
+        default_kp=P_E03,
+        default_kd=D_E03,
+        joint_pmin=-1.0,
+        joint_pmax=1.3,
+    ),
+    MotorConfig(
+        motor_id=0x02,
+        joint_name="left_hip_roll",
+        bus_name="can0",
+        v_min=-20.0,
+        v_max=20.0,
+        t_min=-60.0,
+        t_max=60.0,
+        kp_max=5000.0,
+        kd_max=100.0,
+        default_kp=P_E03,
+        default_kd=D_E03,
+        joint_pmin=-1.0,
+        joint_pmax=0.4,
+    ),
+    MotorConfig(
+        motor_id=0x03,
+        joint_name="left_hip_pitch",
+        bus_name="can0",
+        v_min=-20.0,
+        v_max=20.0,
+        t_min=-60.0,
+        t_max=60.0,
+        kp_max=5000.0,
+        kd_max=100.0,
+        default_kp=P_E03,
+        default_kd=D_E03,
+        joint_pmin=-1.0,
+        joint_pmax=1.0,
+    ),
+    MotorConfig(
+        motor_id=0x04,
+        joint_name="left_knee",
+        bus_name="can0",
+        v_min=-20.0,
+        v_max=20.0,
+        t_min=-60.0,
+        t_max=60.0,
+        kp_max=5000.0,
+        kd_max=100.0,
+        default_kp=P_E03,
+        default_kd=D_E03,
+        joint_pmin=-1.9,
+        joint_pmax=0.3,
+    ),
+    MotorConfig(
+        motor_id=0x05,
+        joint_name="left_ankle_pitch",
+        bus_name="can0",
+        v_min=-44.0,
+        v_max=44.0,
+        t_min=-17.0,
+        t_max=17.0,
+        kp_max=500.0,
+        kd_max=5.0,
+        default_kp=P_E02,
+        default_kd=D_E02,
+        joint_pmin=-1.0,
+        joint_pmax=1.0,
+    ),
+    MotorConfig(
+        motor_id=0x06,
+        joint_name="left_ankle_roll",
+        bus_name="can0",
+        v_min=-33.0,
+        v_max=33.0,
+        t_min=-14.0,
+        t_max=14.0,
+        kp_max=500.0,
+        kd_max=5.0,
+        default_kp=P_E00,
+        default_kd=D_E00,
+        joint_pmin=-1.0,
+        joint_pmax=1.0,
+    ),
+    # ─────────────── can1: 右腿 6 个 ───────────────
+    MotorConfig(
+        motor_id=0x0B,
+        joint_name="right_hip_yaw",
+        bus_name="can1",
+        v_min=-20.0,
+        v_max=20.0,
+        t_min=-60.0,
+        t_max=60.0,
+        kp_max=5000.0,
+        kd_max=100.0,
+        default_kp=P_E03,
+        default_kd=D_E03,
+        joint_pmin=-1.3,
+        joint_pmax=1.0,
+    ),
+    MotorConfig(
+        motor_id=0x0C,
+        joint_name="right_hip_roll",
+        bus_name="can1",
+        v_min=-20.0,
+        v_max=20.0,
+        t_min=-60.0,
+        t_max=60.0,
+        kp_max=5000.0,
+        kd_max=100.0,
+        default_kp=P_E03,
+        default_kd=D_E03,
+        joint_pmin=-0.4,
+        joint_pmax=1.0,
+    ),
+    MotorConfig(
+        motor_id=0x0D,
+        joint_name="right_hip_pitch",
+        bus_name="can1",
+        v_min=-20.0,
+        v_max=20.0,
+        t_min=-60.0,
+        t_max=60.0,
+        kp_max=5000.0,
+        kd_max=100.0,
+        default_kp=P_E03,
+        default_kd=D_E03,
+        joint_pmin=-1.0,
+        joint_pmax=1.0,
+    ),
+    MotorConfig(
+        motor_id=0x0E,
+        joint_name="right_knee",
+        bus_name="can1",
+        v_min=-20.0,
+        v_max=20.0,
+        t_min=-60.0,
+        t_max=60.0,
+        kp_max=5000.0,
+        kd_max=100.0,
+        default_kp=P_E03,
+        default_kd=D_E03,
+        joint_pmin=-0.3,
+        joint_pmax=1.9,
+    ),
+    MotorConfig(
+        motor_id=0x0F,
+        joint_name="right_ankle_pitch",
+        bus_name="can1",
+        v_min=-44.0,
+        v_max=44.0,
+        t_min=-17.0,
+        t_max=17.0,
+        kp_max=500.0,
+        kd_max=5.0,
+        default_kp=P_E02,
+        default_kd=D_E02,
+        joint_pmin=-1.0,
+        joint_pmax=1.0,
+    ),
+    MotorConfig(
+        motor_id=0x10,
+        joint_name="right_ankle_roll",
+        bus_name="can1",
+        v_min=-33.0,
+        v_max=33.0,
+        t_min=-14.0,
+        t_max=14.0,
+        kp_max=500.0,
+        kd_max=5.0,
+        default_kp=P_E00,
+        default_kd=D_E00,
+        joint_pmin=-1.0,
+        joint_pmax=1.0,
+    ),
+    # ─────────────── can2: 腰 1 个 ───────────────
+    MotorConfig(
+        motor_id=0x15,
+        joint_name="waist_yaw",
+        bus_name="can2",
+        v_min=-50.0,
+        v_max=50.0,
+        t_min=-36.0,
+        t_max=36.0,
+        kp_max=5000.0,
+        kd_max=100.0,
+        default_kp=P_E06,
+        default_kd=D_E06,
+        joint_pmin=-1.0,
+        joint_pmax=1.0,
+    ),
+    # ─────────────── can2: 左臂 5 个 ───────────────
+    MotorConfig(
+        motor_id=0x29,
+        joint_name="left_shoulder_pitch",
+        bus_name="can2",
+        v_min=-44.0,
+        v_max=44.0,
+        t_min=-17.0,
+        t_max=17.0,
+        kp_max=500.0,
+        kd_max=5.0,
+        default_kp=P_E02,
+        default_kd=D_E02,
+        joint_pmin=-2.0,
+        joint_pmax=2.0,
+    ),
+    MotorConfig(
+        motor_id=0x2A,
+        joint_name="left_shoulder_roll",
+        bus_name="can2",
+        default_pos=1.4,
+        v_min=-33.0,
+        v_max=33.0,
+        t_min=-14.0,
+        t_max=14.0,
+        kp_max=500.0,
+        kd_max=5.0,
+        default_kp=P_E00,
+        default_kd=D_E00,
+        joint_pmin=-2.0,
+        joint_pmax=2.0,
+    ),
+    MotorConfig(
+        motor_id=0x2B,
+        joint_name="left_shoulder_yaw",
+        bus_name="can2",
+        v_min=-33.0,
+        v_max=33.0,
+        t_min=-14.0,
+        t_max=14.0,
+        kp_max=500.0,
+        kd_max=5.0,
+        default_kp=P_E00,
+        default_kd=D_E00,
+        joint_pmin=-2.0,
+        joint_pmax=2.0,
+    ),
+    MotorConfig(
+        motor_id=0x2C,
+        joint_name="left_elbow",
+        bus_name="can2",
+        v_min=-33.0,
+        v_max=33.0,
+        t_min=-14.0,
+        t_max=14.0,
+        kp_max=500.0,
+        kd_max=5.0,
+        default_kp=P_E00,
+        default_kd=D_E00,
+        joint_pmin=-2.0,
+        joint_pmax=2.0,
+    ),
+    MotorConfig(
+        motor_id=0x2D,
+        joint_name="left_wrist_yaw",
+        bus_name="can2",
+        v_min=-33.0,
+        v_max=33.0,
+        t_min=-14.0,
+        t_max=14.0,
+        kp_max=500.0,
+        kd_max=5.0,
+        default_kp=P_E00,
+        default_kd=D_E00,
+        joint_pmin=-2.0,
+        joint_pmax=2.0,
+    ),
+    # ─────────────── can3: 右臂 4 个 + 头 1 个 ───────────────
+    MotorConfig(
+        motor_id=0x33,
+        joint_name="right_shoulder_pitch",
+        bus_name="can3",
+        v_min=-44.0,
+        v_max=44.0,
+        t_min=-17.0,
+        t_max=17.0,
+        kp_max=500.0,
+        kd_max=5.0,
+        default_kp=P_E02,
+        default_kd=D_E02,
+        joint_pmin=-2.0,
+        joint_pmax=2.0,
+    ),
+    MotorConfig(
+        motor_id=0x34,
+        joint_name="right_shoulder_roll",
+        bus_name="can3",
+        default_pos=-1.4,
+        v_min=-33.0,
+        v_max=33.0,
+        t_min=-14.0,
+        t_max=14.0,
+        kp_max=500.0,
+        kd_max=5.0,
+        default_kp=P_E00,
+        default_kd=D_E00,
+        joint_pmin=-2.0,
+        joint_pmax=2.0,
+    ),
+    MotorConfig(
+        motor_id=0x35,
+        joint_name="right_shoulder_yaw",
+        bus_name="can3",
+        v_min=-33.0,
+        v_max=33.0,
+        t_min=-14.0,
+        t_max=14.0,
+        kp_max=500.0,
+        kd_max=5.0,
+        default_kp=P_E00,
+        default_kd=D_E00,
+        joint_pmin=-2.0,
+        joint_pmax=2.0,
+    ),
+    MotorConfig(
+        motor_id=0x36,
+        joint_name="right_elbow",
+        bus_name="can3",
+        v_min=-33.0,
+        v_max=33.0,
+        t_min=-14.0,
+        t_max=14.0,
+        kp_max=500.0,
+        kd_max=5.0,
+        default_kp=P_E00,
+        default_kd=D_E00,
+        joint_pmin=-2.0,
+        joint_pmax=2.0,
+    ),
+    MotorConfig(
+        motor_id=0x37,
+        joint_name="right_wrist_yaw",
+        bus_name="can3",
+        v_min=-33.0,
+        v_max=33.0,
+        t_min=-14.0,
+        t_max=14.0,
+        kp_max=500.0,
+        kd_max=5.0,
+        default_kp=P_E00,
+        default_kd=D_E00,
+        joint_pmin=-2.0,
+        joint_pmax=2.0,
+    ),
+]

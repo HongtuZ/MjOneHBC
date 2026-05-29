@@ -12,7 +12,7 @@ class TrackingPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     logger: str = "tensorboard"
     upload_model: bool = False
     num_steps_per_env: int = 24
-    max_iterations: int = 30_000
+    max_iterations: int = 100_000
     save_interval: int = 50
     obs_groups: dict = field(default_factory=lambda: {"actor": ["actor"], "critic": ["critic"]})
     experiment_name: str = "ths_23dof_tracking"
