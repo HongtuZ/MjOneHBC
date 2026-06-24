@@ -1,9 +1,9 @@
+from dataclasses import dataclass
+from pathlib import Path
+
 import joblib
 import torch
-from pathlib import Path
-from collections import defaultdict
 from mjlab.utils.lab_api import math as math_utils
-from dataclasses import dataclass
 
 
 @dataclass
@@ -15,6 +15,10 @@ class Motion:
     body_quat_w: torch.Tensor  # (num_frames, 4) wxyz
     body_lin_vel_w: torch.Tensor  # (num_frames, 3)
     body_ang_vel_w: torch.Tensor  # (num_frames, 3)
+    body_pos_b: torch.Tensor  # (num_frames, 3)
+    body_quat_b: torch.Tensor  # (num_frames, 4) wxyz
+    body_lin_vel_b: torch.Tensor  # (num_frames, 3)
+    body_ang_vel_b: torch.Tensor  # (num_frames, 3)
 
 
 class MotionLoader:
@@ -212,15 +216,15 @@ class MotionLoader:
         time_end = motion_durations.clone()
 
         if truncate_time_start is not None:
-            assert (
-                truncate_time_start >= 0
-            ), f"[MotionLoader] truncate_time_start must be non-negative, but got {truncate_time_start}."
+            assert truncate_time_start >= 0, (
+                f"[MotionLoader] truncate_time_start must be non-negative, but got {truncate_time_start}."
+            )
             time_start = torch.clamp(time_start + truncate_time_start, min=0.0, max=motion_durations)
 
         if truncate_time_end is not None:
-            assert (
-                truncate_time_end >= 0
-            ), f"[MotionLoader] truncate_time_end must be non-negative, but got {truncate_time_end}."
+            assert truncate_time_end >= 0, (
+                f"[MotionLoader] truncate_time_end must be non-negative, but got {truncate_time_end}."
+            )
             time_end = torch.clamp(time_end - truncate_time_end, min=0.0)
 
         # Check if valid range exists
@@ -357,19 +361,31 @@ class MotionLoader:
         motion_seq_times: torch.Tensor,  # (ids, n_step)
         joint_names: list | None = None,
         body_names: list | None = None,
-    ) -> dict[str, torch.Tensor]:
+    ) -> Motion:
         new_motion_ids = motion_ids.unsqueeze(-1).expand(-1, motion_seq_times.shape[-1]).reshape(-1)
         new_motion_seq_times = motion_seq_times.reshape(-1)
         motion_data = self.get_motion_data(new_motion_ids, new_motion_seq_times, joint_names, body_names)
         for k, v in motion_data.items():
             motion_data[k] = v.reshape(*motion_seq_times.shape, *v.shape[1:])
-        return motion_data
+        return Motion(
+            time_step_total=motion_seq_times.shape[-1],
+            joint_pos=motion_data["joint_pos"],
+            joint_vel=motion_data["joint_vel"],
+            body_pos_w=motion_data["body_pos_w"],
+            body_quat_w=motion_data["body_quat_w"],
+            body_lin_vel_w=motion_data["body_lin_vel_w"],
+            body_ang_vel_w=motion_data["body_ang_vel_w"],
+            body_pos_b=motion_data["body_pos_b"],
+            body_quat_b=motion_data["body_quat_b"],
+            body_lin_vel_b=motion_data["body_lin_vel_b"],
+            body_ang_vel_b=motion_data["body_ang_vel_b"],
+        )
 
     def get_one_motion(
         self, motion_id: int, dt: float, joint_names: list | None = None, body_names: list | None = None
     ) -> Motion:
-        sampled_times = torch.arange(0, self.motion_durations[motion_id], dt).to(self.device)
-        motion_ids = torch.full_like(sampled_times, motion_id, dtype=int).to(self.device)
+        sampled_times = torch.arange(0, self.motion_durations[motion_id].item(), dt).to(self.device)
+        motion_ids = torch.full_like(sampled_times, motion_id, dtype=torch.int).to(self.device)
         motion_data = self.get_motion_data(motion_ids, sampled_times, joint_names, body_names)
         return Motion(
             time_step_total=sampled_times.shape[-1],
@@ -379,6 +395,10 @@ class MotionLoader:
             body_quat_w=motion_data["body_quat_w"],
             body_lin_vel_w=motion_data["body_lin_vel_w"],
             body_ang_vel_w=motion_data["body_ang_vel_w"],
+            body_pos_b=motion_data["body_pos_b"],
+            body_quat_b=motion_data["body_quat_b"],
+            body_lin_vel_b=motion_data["body_lin_vel_b"],
+            body_ang_vel_b=motion_data["body_ang_vel_b"],
         )
 
     # TODO: We implement this function due to isaaclab math_utils does not support parallel quat_slerp,
@@ -449,6 +469,4 @@ if __name__ == "__main__":
                 motion_seq_data["joint_vel"],
             ],
             dim=-1,
-        ).to(
-            "cuda:0"
-        )  # (num_envs, n_steps, d)
+        ).to("cuda:0")  # (num_envs, n_steps, d)

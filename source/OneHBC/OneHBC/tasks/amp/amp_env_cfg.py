@@ -33,24 +33,25 @@ from . import mdp
 # MDP settings
 ##
 
+AMP_INPUT_STEPS = 3  # Number of past steps to include in the input (for amp discriminator).
+
 
 commands: dict[str, CommandTermCfg] = {
     "base_velocity": UniformVelocityCommandCfg(
         entity_name="robot",
-        resampling_time_range=(10.0, 10.0),
-        rel_standing_envs=0.02,
-        rel_heading_envs=1.0,
-        rel_forward_envs=0.2,
+        resampling_time_range=(3.0, 8.0),
+        rel_standing_envs=0.05,
+        rel_heading_envs=0.25,
         heading_command=True,
         heading_control_stiffness=0.5,
         debug_vis=True,
         ranges=UniformVelocityCommandCfg.Ranges(
-            lin_vel_x=(-0.8, 2.5),
-            lin_vel_y=(-0.8, 0.8),
-            ang_vel_z=(0.0, 0.0),
-            heading=(-math.pi, math.pi),
+            lin_vel_x=(-1.5, 3.0),
+            lin_vel_y=(-1.0, 1.0),
+            ang_vel_z=(-math.pi / 2, math.pi / 2),
+            heading=(-math.pi / 2, math.pi / 2),
         ),
-    )
+    ),
 }
 
 actions: dict[str, ActionTermCfg] = {
@@ -99,6 +100,14 @@ observations = {
             "base_ang_vel": ObservationTermCfg(
                 func=mdp.base_ang_vel,
             ),
+            "body_pos_b": ObservationTermCfg(
+                func=mdp.robot_body_pos_b,
+                params={"asset_cfg": SceneEntityCfg("robot", body_names=())},  # set per robot
+            ),
+            "body_ori_b": ObservationTermCfg(
+                func=mdp.robot_body_ori_b,
+                params={"asset_cfg": SceneEntityCfg("robot", body_names=())},  # set per robot
+            ),
             "projected_gravity": ObservationTermCfg(
                 func=mdp.projected_gravity,
             ),
@@ -118,61 +127,49 @@ observations = {
         concatenate_terms=True,
         enable_corruption=False,
     ),
+    "discriminator": ObservationGroupCfg(
+        terms={
+            "body_pos_b": ObservationTermCfg(
+                func=mdp.robot_body_pos_b,
+                params={"asset_cfg": SceneEntityCfg("robot", body_names=())},  # set per robot
+            ),
+            "body_ori_b": ObservationTermCfg(
+                func=mdp.robot_body_ori_b,
+                params={"asset_cfg": SceneEntityCfg("robot", body_names=())},  # set per robot
+            ),
+            "body_lin_vel_b": ObservationTermCfg(
+                func=mdp.robot_body_lin_vel_b,
+                params={"asset_cfg": SceneEntityCfg("robot", body_names=())},  # set per robot
+            ),
+            "body_ang_vel_b": ObservationTermCfg(
+                func=mdp.robot_body_ang_vel_b,
+                params={"asset_cfg": SceneEntityCfg("robot", body_names=())},  # set per robot
+            ),
+        },
+        history_length=AMP_INPUT_STEPS,
+        concatenate_terms=True,
+        enable_corruption=False,
+    ),
+    "discriminator_expert": ObservationGroupCfg(
+        terms={
+            "amp_data_discriminator": ObservationTermCfg(
+                func=mdp.amp_motion_data_obs,
+                params={
+                    "motion_data_dir": None,  # set per robot
+                    "motion_data_weights": None,
+                    "n_steps": AMP_INPUT_STEPS,
+                    "asset_cfg": SceneEntityCfg("robot", body_names=()),  # set per robot
+                },
+            ),
+        },
+        history_length=1,
+        concatenate_terms=True,
+        enable_corruption=False,
+    ),
 }
 
 events = {
-    "reset_base": EventTermCfg(
-        func=mdp.reset_root_state_uniform,
-        mode="reset",
-        params={
-            "pose_range": {
-                "x": (-0.5, 0.5),
-                "y": (-0.5, 0.5),
-                "z": (0.01, 0.05),
-                "yaw": (-3.14, 3.14),
-            },
-            "velocity_range": {
-                "x": (-0.2, 0.2),
-                "y": (-0.2, 0.2),
-                "z": (-0.2, 0.2),
-                "roll": (-0.2, 0.2),
-                "pitch": (-0.2, 0.2),
-                "yaw": (-0.2, 0.2),
-            },
-        },
-    ),
-    "reset_robot_joints": EventTermCfg(
-        func=mdp.reset_joints_by_offset,
-        mode="reset",
-        params={
-            "position_range": (-0.2, 0.2),
-            "velocity_range": (-0.2, 0.2),
-            "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
-        },
-    ),
-    "push_robot": EventTermCfg(
-        func=mdp.push_by_setting_velocity,
-        mode="interval",
-        interval_range_s=(5, 15),
-        params={
-            "velocity_range": {
-                "x": (-0.5, 0.5),
-                "y": (-0.5, 0.5),
-                "z": (-0.4, 0.4),
-                "roll": (-0.52, 0.52),
-                "pitch": (-0.52, 0.52),
-                "yaw": (-1.0, 1.0),
-            },
-        },
-    ),
-    "encoder_bias": EventTermCfg(
-        mode="startup",
-        func=dr.encoder_bias,
-        params={
-            "asset_cfg": SceneEntityCfg("robot"),
-            "bias_range": (-0.015, 0.015),
-        },
-    ),
+    # Start up randomization
     "base_com": EventTermCfg(
         mode="startup",
         func=dr.body_com_offset,
@@ -180,11 +177,34 @@ events = {
             "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
             "operation": "add",
             "ranges": {
-                0: (-0.025, 0.025),
-                1: (-0.025, 0.025),
-                2: (-0.03, 0.03),
+                0: (-0.03, 0.03),
+                1: (-0.05, 0.05),
+                2: (-0.05, 0.05),
             },
         },
+    ),
+    "base_mass": EventTermCfg(
+        mode="startup",
+        func=dr.body_mass,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
+            "operation": "add",
+            "ranges": (-3.0, 3.0),
+        },
+    ),
+    "body_mass": EventTermCfg(
+        mode="startup",
+        func=dr.body_mass,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
+            "operation": "scale",
+            "ranges": (0.8, 1.2),
+        },
+    ),
+    "encoder_bias": EventTermCfg(
+        mode="startup",
+        func=dr.encoder_bias,
+        params={"bias_range": (-0.01, 0.01)},
     ),
     "foot_friction": EventTermCfg(
         mode="startup",
@@ -192,7 +212,7 @@ events = {
         params={
             "asset_cfg": SceneEntityCfg("robot", geom_names=()),  # Set per-robot.
             "operation": "abs",
-            "ranges": (0.3, 1.2),
+            "ranges": (0.2, 2.0),
             "shared_random": True,  # All foot geoms share the same friction.
         },
     ),
@@ -206,18 +226,40 @@ events = {
             "kd_range": (0.8, 1.2),
         },
     ),
+    # Reset from motion data
+    "reset_from_motion_data": EventTermCfg(
+        mode="reset",
+        func=mdp.reset_from_motion_data,
+        params={"motion_data_dir": None},  # set per robot
+    ),
+    # Interval randomization
+    "push_robot": EventTermCfg(
+        func=mdp.push_by_setting_velocity,
+        mode="interval",
+        interval_range_s=(3.0, 5.0),
+        params={
+            "velocity_range": {
+                "x": (-1.0, 1.0),
+                "y": (-0.5, -0.5),
+                "z": (-0.4, 0.4),
+                "roll": (-0.5, 0.5),
+                "pitch": (-0.5, 0.5),
+                "yaw": (-0.5, 0.5),
+            }
+        },
+    ),
 }
 
 rewards = {
     # -- builtin rewards
     "is_alive": RewardTermCfg(func=mdp.is_alive, weight=1.0),
-    "is_terminated": RewardTermCfg(func=mdp.is_terminated, weight=-1.0),
+    "is_terminated": RewardTermCfg(func=mdp.is_terminated, weight=-200.0),
     "joint_torques_l2": RewardTermCfg(func=mdp.joint_torques_l2, weight=-1.0e-5),
     "joint_vel_l2": RewardTermCfg(func=mdp.joint_vel_l2, weight=-1.0e-5),
     "joint_acc_l2": RewardTermCfg(func=mdp.joint_acc_l2, weight=-2.5e-7),
     "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.01),
     "action_acc_l2": RewardTermCfg(func=mdp.action_acc_l2, weight=-0.01),
-    "joint_pos_limits": RewardTermCfg(func=mdp.joint_pos_limits, weight=-0.01),
+    "joint_pos_limits": RewardTermCfg(func=mdp.joint_pos_limits, weight=-10.0),
     "flat_orientation_l2": RewardTermCfg(func=mdp.flat_orientation_l2, weight=-0.01),
     "joint_deviation_exp": RewardTermCfg(
         func=mdp.posture,
@@ -227,7 +269,7 @@ rewards = {
     "joint_energy": RewardTermCfg(
         func=mdp.electrical_power_cost, weight=-0.01, params={"asset_cfg": SceneEntityCfg("robot", joint_names=(".*",))}
     ),
-    # -- task
+    # -- command tracking
     "track_lin_vel_exp": RewardTermCfg(
         func=mdp.track_lin_vel_exp, weight=1.0, params={"command_name": "base_velocity", "std": 0.5}
     ),
@@ -239,12 +281,6 @@ rewards = {
 
 terminations = {
     "time_out": TerminationTermCfg(func=mdp.time_out, time_out=True),
-    "bad_orientation": TerminationTermCfg(
-        func=mdp.bad_orientation,
-        params={
-            "limit_angle": math.radians(60.0),
-        },
-    ),
 }
 
 ##
@@ -257,9 +293,11 @@ metrics = {
     ),
 }
 
+curriculum = {}
+
 
 @dataclass(kw_only=True)
-class VelocityEnvCfg(ManagerBasedRlEnvCfg):
+class AmpEnvCfg(ManagerBasedRlEnvCfg):
     # Scene settings
     scene: SceneCfg = field(
         default_factory=lambda: SceneCfg(
@@ -276,6 +314,7 @@ class VelocityEnvCfg(ManagerBasedRlEnvCfg):
     observations: dict = field(default_factory=lambda: deepcopy(observations))
     actions: dict = field(default_factory=lambda: deepcopy(actions))
     commands: dict = field(default_factory=lambda: deepcopy(commands))
+    curriculum: dict = field(default_factory=lambda: deepcopy(curriculum))
     # MDP settings
     rewards: dict = field(default_factory=lambda: deepcopy(rewards))
     terminations: dict = field(default_factory=lambda: deepcopy(terminations))

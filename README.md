@@ -27,7 +27,9 @@ OneHBC is a dedicated research framework for training humanoid robot locomotion 
 
 - OS: Ubuntu 22\.04 / 24\.04
 
-- Mjlab: `>=1.3.0`
+- Mjlab: `>=1.4.0`
+
+- rsl-rl-lib: `>=5.4.1`
 
 - Python: 3\.12
 
@@ -48,7 +50,7 @@ conda activate onehbc
 
 ```bash
 pip install mjlab
-pip install rsl-rl
+pip install rsl-rl-lib
 ```
 
 ### 3\. Clone MjOneHBC
