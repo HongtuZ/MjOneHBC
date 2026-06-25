@@ -230,7 +230,10 @@ events = {
     "reset_from_motion_data": EventTermCfg(
         mode="reset",
         func=mdp.reset_from_motion_data,
-        params={"motion_data_dir": None},  # set per robot
+        params={
+            "motion_data_dir": None,  # set per robot
+            "asset_cfg": SceneEntityCfg("robot", joint_names=(".*_joint")),
+        },
     ),
     # Interval randomization
     "push_robot": EventTermCfg(
@@ -328,6 +331,8 @@ class AmpEnvCfg(ManagerBasedRlEnvCfg):
             distance=3.0,
             elevation=-5.0,
             azimuth=90.0,
+            width=720,
+            height=480,
         )
     )
     sim: SimulationCfg = field(

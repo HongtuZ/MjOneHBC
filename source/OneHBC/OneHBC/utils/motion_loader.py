@@ -8,7 +8,13 @@ from mjlab.utils.lab_api import math as math_utils
 
 @dataclass
 class Motion:
-    time_step_total: int
+    num_frames: int
+    root_pos_w: torch.Tensor  # (num_frames, 3)
+    root_quat_w: torch.Tensor  # (num_frames, 4) wxyz
+    root_lin_vel_w: torch.Tensor  # (num_frames, 3)
+    root_ang_vel_w: torch.Tensor  # (num_frames, 3)
+    root_lin_vel_b: torch.Tensor  # (num_frames, 3)
+    root_ang_vel_b: torch.Tensor  # (num_frames, 3)
     joint_pos: torch.Tensor  # (num_frames, num_joints)
     joint_vel: torch.Tensor  # (num_frames, num_joints)
     body_pos_w: torch.Tensor  # (num_frames, 3)
@@ -368,7 +374,13 @@ class MotionLoader:
         for k, v in motion_data.items():
             motion_data[k] = v.reshape(*motion_seq_times.shape, *v.shape[1:])
         return Motion(
-            time_step_total=motion_seq_times.shape[-1],
+            num_frames=motion_seq_times.shape[-1],
+            root_pos_w=motion_data["root_pos_w"],
+            root_lin_vel_w=motion_data["root_lin_vel_w"],
+            root_lin_vel_b=motion_data["root_lin_vel_b"],
+            root_ang_vel_w=motion_data["root_ang_vel_w"],
+            root_ang_vel_b=motion_data["root_ang_vel_b"],
+            root_quat_w=motion_data["root_quat_w"],
             joint_pos=motion_data["joint_pos"],
             joint_vel=motion_data["joint_vel"],
             body_pos_w=motion_data["body_pos_w"],
@@ -388,7 +400,13 @@ class MotionLoader:
         motion_ids = torch.full_like(sampled_times, motion_id, dtype=torch.int).to(self.device)
         motion_data = self.get_motion_data(motion_ids, sampled_times, joint_names, body_names)
         return Motion(
-            time_step_total=sampled_times.shape[-1],
+            num_frames=sampled_times.shape[-1],
+            root_pos_w=motion_data["root_pos_w"],
+            root_lin_vel_w=motion_data["root_lin_vel_w"],
+            root_lin_vel_b=motion_data["root_lin_vel_b"],
+            root_ang_vel_w=motion_data["root_ang_vel_w"],
+            root_ang_vel_b=motion_data["root_ang_vel_b"],
+            root_quat_w=motion_data["root_quat_w"],
             joint_pos=motion_data["joint_pos"],
             joint_vel=motion_data["joint_vel"],
             body_pos_w=motion_data["body_pos_w"],

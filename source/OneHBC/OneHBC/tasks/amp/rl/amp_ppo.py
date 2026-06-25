@@ -213,6 +213,7 @@ class AmpPPO:
             generator = self.storage.mini_batch_generator(self.num_mini_batches, self.num_learning_epochs)
 
         # Iterate over mini-batches
+        valid_update_cnt = 0
         for batch in generator:
             original_batch_size = batch.observations.batch_size[0]
 
@@ -235,6 +236,8 @@ class AmpPPO:
             )
             actions_log_prob = self.actor.get_output_log_prob(batch.actions)  # type: ignore
             values = self.critic(batch.observations, masks=batch.masks, hidden_state=batch.hidden_states[1])
+            if not torch.isfinite(values).all():
+                continue
             # Note: We only keep the following tensors for the original samples in case of symmetry augmentation
             distribution_params = tuple(p[:original_batch_size] for p in self.actor.output_distribution_params)
             entropy = self.actor.output_entropy[:original_batch_size]
@@ -285,6 +288,9 @@ class AmpPPO:
                 value_loss = (batch.returns - values).pow(2).mean()
 
             loss = surrogate_loss + self.value_loss_coef * value_loss - self.entropy_coef * entropy.mean()
+
+            if not torch.isfinite(value_loss) or not torch.isfinite(value_loss):
+                continue
 
             # RND loss
             rnd_loss = self.rnd.compute_loss(batch.observations[:original_batch_size]) if self.rnd else None  # type: ignore
@@ -341,9 +347,11 @@ class AmpPPO:
             mean_amp_policy_pred += amp_policy_pred.mean().item()
             mean_amp_expert_pred += amp_expert_pred.mean().item()
             mean_amp_grad_penalty_loss += amp_grad_panalty.item()
+            # Valid update
+            valid_update_cnt += 1
 
         # Divide the losses by the number of updates
-        num_updates = self.num_learning_epochs * self.num_mini_batches
+        num_updates = valid_update_cnt
         mean_value_loss /= num_updates
         mean_surrogate_loss /= num_updates
         mean_entropy /= num_updates

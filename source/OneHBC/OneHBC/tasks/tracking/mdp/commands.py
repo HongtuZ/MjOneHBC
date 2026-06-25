@@ -3,12 +3,11 @@ from __future__ import annotations
 import copy
 import math
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal
 from pathlib import Path
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import torch
-
 from mjlab.managers import CommandTerm, CommandTermCfg
 from mjlab.utils.lab_api.math import (
     matrix_from_quat,
@@ -27,7 +26,6 @@ if TYPE_CHECKING:
     from typing import Any
 
     import viser
-
     from mjlab.entity import Entity
     from mjlab.envs import ManagerBasedRlEnv
 
@@ -66,7 +64,7 @@ class MotionCommand(CommandTerm):
         self.body_quat_relative_w = torch.zeros(self.num_envs, len(cfg.body_names), 4, device=self.device)
         self.body_quat_relative_w[:, :, 0] = 1.0
 
-        self.bin_count = int(self.motion.time_step_total // (1 / env.step_dt)) + 1
+        self.bin_count = int(self.motion.num_frames // (1 / env.step_dt)) + 1
         self.bin_failed_count = torch.zeros(self.bin_count, dtype=torch.float, device=self.device)
         self._current_bin_failed = torch.zeros(self.bin_count, dtype=torch.float, device=self.device)
         self.kernel = torch.tensor(
@@ -201,7 +199,7 @@ class MotionCommand(CommandTerm):
         episode_failed = self._env.termination_manager.terminated[env_ids]
         if torch.any(episode_failed):
             current_bin_index = torch.clamp(
-                (self.time_steps * self.bin_count) // max(self.motion.time_step_total, 1),
+                (self.time_steps * self.bin_count) // max(self.motion.num_frames, 1),
                 0,
                 self.bin_count - 1,
             )
@@ -223,7 +221,7 @@ class MotionCommand(CommandTerm):
         self.time_steps[env_ids] = (
             (sampled_bins + sample_uniform(0.0, 1.0, (len(env_ids),), device=self.device))
             / self.bin_count
-            * (self.motion.time_step_total - 1)
+            * (self.motion.num_frames - 1)
         ).long()
 
         # Update metrics.
@@ -235,7 +233,7 @@ class MotionCommand(CommandTerm):
         self.metrics["sampling_top1_bin"][:] = imax.float() / self.bin_count
 
     def _uniform_sampling(self, env_ids: torch.Tensor):
-        self.time_steps[env_ids] = torch.randint(0, self.motion.time_step_total, (len(env_ids),), device=self.device)
+        self.time_steps[env_ids] = torch.randint(0, self.motion.num_frames, (len(env_ids),), device=self.device)
         self.metrics["sampling_entropy"][:] = 1.0  # Maximum entropy for uniform.
         self.metrics["sampling_top1_prob"][:] = 1.0 / self.bin_count
         self.metrics["sampling_top1_bin"][:] = 0.5  # No specific bin preference.
@@ -325,7 +323,7 @@ class MotionCommand(CommandTerm):
 
     def _update_command(self):
         self.time_steps += 1
-        env_ids = torch.where(self.time_steps >= self.motion.time_step_total)[0]
+        env_ids = torch.where(self.time_steps >= self.motion.num_frames)[0]
         if env_ids.numel() > 0:
             self._resample_command(env_ids)
 
@@ -427,7 +425,7 @@ class MotionCommand(CommandTerm):
         request_action: Callable[[str, Any], None] | None = None,
     ) -> None:
         """Create motion scrubber controls in the Viser viewer."""
-        max_frame = int(self.motion.time_step_total) - 1
+        max_frame = int(self.motion.num_frames) - 1
 
         with server.gui.add_folder(name.capitalize()):
             scrubber = server.gui.add_slider(

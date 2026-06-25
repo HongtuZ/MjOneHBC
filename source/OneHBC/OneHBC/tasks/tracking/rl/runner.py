@@ -26,10 +26,10 @@ class _OnnxMotionModel(nn.Module):
         self.register_buffer("body_quat_w", motion.body_quat_w.to("cpu"))
         self.register_buffer("body_lin_vel_w", motion.body_lin_vel_w.to("cpu"))
         self.register_buffer("body_ang_vel_w", motion.body_ang_vel_w.to("cpu"))
-        self.time_step_total: int = self.joint_pos.shape[0]  # type: ignore[index]
+        self.num_frames: int = self.joint_pos.shape[0]  # type: ignore[index]
 
     def forward(self, x, time_step):
-        time_step_clamped = torch.clamp(time_step.long().squeeze(-1), max=self.time_step_total - 1)
+        time_step_clamped = torch.clamp(time_step.long().squeeze(-1), max=self.num_frames - 1)
         return (
             self.policy(x),
             self.joint_pos[time_step_clamped],  # type: ignore[index]
