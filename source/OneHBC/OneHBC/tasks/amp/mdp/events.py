@@ -44,7 +44,7 @@ class reset_from_motion_data:
             motion_ids, motion_times, joint_names=joint_names
         )  # (num_env, n_step, dim)
         ref_root_pos_w = motion_data["root_pos_w"] + env.scene.env_origins[env_ids]
-        ref_root_pos_w[..., 2] = 0.8  # avoid penetration
+        ref_root_pos_w[..., 2] = 0.78  # avoid penetration
         ref_root_quat_w = motion_data["root_quat_w"]
         ref_root_lin_vel_w = motion_data["root_lin_vel_w"]
         ref_root_ang_vel_w = torch.zeros_like(ref_root_lin_vel_w)

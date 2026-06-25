@@ -83,7 +83,7 @@ THS_T2_29DOF_CFG = EntityCfg(
                     ".*_hip_roll_joint",
                     ".*_knee_joint",
                 ),
-                stiffness=EC_A6416_EFFORT,
+                stiffness=EC_A6416_STIFFNESS,
                 damping=EC_A6416_DAMPPING,
                 armature=EC_A6416_ARMATURE,
                 effort_limit=EC_A6416_EFFORT,

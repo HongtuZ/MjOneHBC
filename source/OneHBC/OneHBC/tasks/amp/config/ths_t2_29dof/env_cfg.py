@@ -112,14 +112,14 @@ class AmpRoughEnvCfg(AmpEnvCfg):
 
         # Basic Reward
         self.rewards["is_alive"].weight = 0
-        self.rewards["is_terminated"].weight = -100
+        self.rewards["is_terminated"].weight = -100.0
         self.rewards["joint_torques_l2"].weight = 0
         self.rewards["joint_vel_l2"].weight = -1.0e-5
         self.rewards["joint_acc_l2"].weight = -2.5e-7
         self.rewards["action_rate_l2"].weight = -0.01
         self.rewards["action_acc_l2"].weight = -0.01
         self.rewards["joint_pos_limits"].weight = -10.0
-        self.rewards["flat_orientation_l2"].weight = -10.0
+        self.rewards["flat_orientation_l2"].weight = 0
         self.rewards["joint_deviation_exp"].weight = -0.01
         self.rewards["joint_energy"].weight = -2e-5
         self.rewards["track_lin_vel_exp"].weight = 1.0
@@ -127,21 +127,21 @@ class AmpRoughEnvCfg(AmpEnvCfg):
         # New Reward
         self.rewards["lin_vel_z_l2"] = RewardTermCfg(func=mdp.lin_vel_z_l2, weight=-0.1)  # 基座Z 轴 上下线速度
         self.rewards["ang_vel_xy_l2"] = RewardTermCfg(func=mdp.ang_vel_xy_l2, weight=-0.1)  # 基座XY轴运动惩罚 -0.1
-        self.rewards["base_height_l2"] = RewardTermCfg(  # 基座高度惩罚
-            func=mdp.base_height_l2, weight=-0.2, params={"target_height": 0.73}
-        )
+        # self.rewards["base_height_l2"] = RewardTermCfg(  # 基座高度惩罚
+        #     func=mdp.base_height_l2, weight=-0.2, params={"target_height": 0.73}
+        # )
         self.rewards["feet_slip"] = RewardTermCfg(  # 脚部滑动惩罚
             func=mdp.feet_slip,
             weight=-0.25,
             params={
                 "sensor_name": "feet_ground_contact",
                 "command_name": "base_velocity",
-                "command_threshold": 0.01,
+                "command_threshold": 0.1,
                 "asset_cfg": SceneEntityCfg("robot", site_names=".*_foot_site"),
             },
         )
         self.rewards["self_collision"] = RewardTermCfg(  # 惩罚机器人身体非脚部区域与环境的接触
-            func=mdp.self_collision_cost, weight=-0.1, params={"sensor_name": "self_collision", "force_threshold": 1}
+            func=mdp.self_collision_cost, weight=-0.1, params={"sensor_name": "self_collision", "force_threshold": 10.0}
         )
 
 
