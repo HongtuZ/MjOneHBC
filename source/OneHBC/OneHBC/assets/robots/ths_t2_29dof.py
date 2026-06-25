@@ -113,8 +113,10 @@ THS_T2_29DOF_CFG = EntityCfg(
             ),
             BuiltinPositionActuatorCfg(
                 target_names_expr=(
+                    "waist_yaw_joint",
                     ".*_ankle_pitch_joint",
                     ".*_shoulder_pitch_joint",
+                    ".*_shoulder_roll_joint",
                     ".*_shoulder_yaw_joint",
                     ".*_elbow_joint",
                     ".*_wrist_roll_joint",

@@ -84,10 +84,10 @@ class AmpRoughEnvCfg(AmpEnvCfg):
 
         # Terminations
         self.terminations["delay_bad_orientation"] = TerminationTermCfg(
-            func=mdp.delay_bad_orientation, params={"max_delay_steps": 250, "limit_angle": math.radians(70.0)}
+            func=mdp.delay_bad_orientation, params={"max_delay_steps": 0, "limit_angle": math.radians(70.0)}
         )
         self.terminations["delay_root_height_below_minimum"] = TerminationTermCfg(
-            func=mdp.delay_root_height_below_minimum, params={"max_delay_steps": 250, "minimum_height": 0.5}
+            func=mdp.delay_root_height_below_minimum, params={"max_delay_steps": 0, "minimum_height": 0.3}
         )
 
         # Observation
