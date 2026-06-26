@@ -84,7 +84,7 @@ class AmpRoughEnvCfg(AmpEnvCfg):
 
         # Terminations
         self.terminations["delay_bad_orientation"] = TerminationTermCfg(
-            func=mdp.delay_bad_orientation, params={"max_delay_steps": 0, "limit_angle": math.radians(70.0)}
+            func=mdp.delay_bad_orientation, params={"max_delay_steps": 0, "limit_angle": math.radians(45.0)}
         )
         self.terminations["delay_root_height_below_minimum"] = TerminationTermCfg(
             func=mdp.delay_root_height_below_minimum, params={"max_delay_steps": 0, "minimum_height": 0.3}
@@ -111,7 +111,7 @@ class AmpRoughEnvCfg(AmpEnvCfg):
         self.actions["joint_pos"].scale = THS_T2_29DOF_ACTION_SCALE
 
         # Basic Reward
-        self.rewards["is_alive"].weight = 0
+        self.rewards["is_alive"].weight = 0.5
         self.rewards["is_terminated"].weight = -100.0
         self.rewards["joint_torques_l2"].weight = 0
         self.rewards["joint_vel_l2"].weight = -1.0e-5
@@ -119,7 +119,7 @@ class AmpRoughEnvCfg(AmpEnvCfg):
         self.rewards["action_rate_l2"].weight = -0.01
         self.rewards["action_acc_l2"].weight = -0.01
         self.rewards["joint_pos_limits"].weight = -10.0
-        self.rewards["flat_orientation_l2"].weight = 0
+        self.rewards["flat_orientation_l2"].weight = -0.01
         self.rewards["joint_deviation_exp"].weight = -0.01
         self.rewards["joint_energy"].weight = -2e-5
         self.rewards["track_lin_vel_exp"].weight = 1.0

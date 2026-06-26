@@ -53,8 +53,8 @@ class AmpRunnerCfg(RslRlOnPolicyRunnerCfg):
             hidden_dims=(1024, 512, 256),
             activation="elu",
             obs_normalization=True,
-            style_reward_scale=0.1,
-            task_reward_lerp=0.5,
+            style_reward_scale=0.5,
+            task_reward_lerp=0.3,
         )
     )
     algorithm: RslRlPpoAlgorithmCfg = field(
