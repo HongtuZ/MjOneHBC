@@ -5,6 +5,7 @@ import numpy as np
 from controller.base_controller import BaseRobotController
 from mujoco_env.mj_env import MujocoEnv
 
+ROOT_DIR = Path(__file__).resolve().parents[2]
 
 class SimController(BaseRobotController):
     """
@@ -28,7 +29,7 @@ class SimController(BaseRobotController):
     def _resolve_init_pose(self, model_path: str) -> tuple[tuple[float, ...], tuple[float, ...]]:
         if "getup" in model_path:
             return (0.0, 0.0, 0.15), (0.70710678, 0.0, 0.70710678, 0.0)
-        return (0.0, 0.0, 0.75), (1.0, 0.0, 0.0, 0.0)
+        return (0.0, 0.0, 0.78), (1.0, 0.0, 0.0, 0.0)
 
     def _create_env(self):
         return MujocoEnv(
@@ -63,9 +64,8 @@ class SimController(BaseRobotController):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, required=True)
+    parser.add_argument("--xml", type=str, default=str(ROOT_DIR / "robot_assets/ths_23dof/urdf/ths_23dof.xml"))
     args = parser.parse_args()
 
-    ROOT_DIR = Path(__file__).resolve().parents[2]
-    xml_path = ROOT_DIR / "robot_assets/ths_23dof/urdf/ths_23dof.xml"
-    controller = SimController(xml_path=str(xml_path), model_path=args.model, use_joystick=False)
+    controller = SimController(xml_path=args.xml, model_path=args.model, use_joystick=False)
     controller.run()

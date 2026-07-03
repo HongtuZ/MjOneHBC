@@ -184,6 +184,9 @@ class OnnxPolicy:
                 )
                 for i in range(len(joint_names))
             ]
+            print('---------------onnx action joint cfg-------------------')
+            for i, cfg in enumerate(self.action_joint_cfg):
+                print(i, cfg)
         except Exception:
             print(
                 "[Error]: Please check your onnx export, should include "

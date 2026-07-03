@@ -101,7 +101,7 @@ class MujocoEnv:
 
         # Set viewer
         self.viewer = mjv.launch_passive(
-            model=self.model, data=self.data, show_left_ui=True, show_right_ui=False, key_callback=keyboard_callback
+            model=self.model, data=self.data, show_left_ui=True, show_right_ui=True, key_callback=keyboard_callback
         )
         self.viewer.cam.distance = 3
         self.viewer.cam.elevation = -10  # 正面视角，轻微向下看
@@ -129,9 +129,10 @@ class MujocoEnv:
         for _ in range(self.decimation):
             tau = self.compute_torque(target)
             self.data.ctrl[self.action2ctrl_ids] = tau
+            self.data.ctrl[:] = np.clip(self.data.ctrl, self.model.actuator_ctrlrange[:, 0], self.model.actuator_ctrlrange[:, 1])
             mj.mj_step(self.model, self.data)
+            self.viewer.sync()
         self.viewer.cam.lookat = self.data.qpos[:3]
-        self.viewer.sync()
         duration = time.perf_counter() - start_time
         time.sleep(max(0, self.dt * self.decimation - duration))
 
