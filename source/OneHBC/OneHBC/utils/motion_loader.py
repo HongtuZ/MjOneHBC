@@ -9,6 +9,7 @@ from mjlab.utils.lab_api import math as math_utils
 @dataclass
 class Motion:
     num_frames: int
+    motion_ids: torch.Tensor # (num_frames,)
     root_pos_w: torch.Tensor  # (num_frames, 3)
     root_quat_w: torch.Tensor  # (num_frames, 4) wxyz
     root_lin_vel_w: torch.Tensor  # (num_frames, 3)
@@ -375,6 +376,7 @@ class MotionLoader:
             motion_data[k] = v.reshape(*motion_seq_times.shape, *v.shape[1:])
         return Motion(
             num_frames=motion_seq_times.shape[-1],
+            motion_ids=new_motion_ids,
             root_pos_w=motion_data["root_pos_w"],
             root_lin_vel_w=motion_data["root_lin_vel_w"],
             root_lin_vel_b=motion_data["root_lin_vel_b"],
@@ -401,6 +403,41 @@ class MotionLoader:
         motion_data = self.get_motion_data(motion_ids, sampled_times, joint_names, body_names)
         return Motion(
             num_frames=sampled_times.shape[-1],
+            motion_ids=motion_ids,
+            root_pos_w=motion_data["root_pos_w"],
+            root_lin_vel_w=motion_data["root_lin_vel_w"],
+            root_lin_vel_b=motion_data["root_lin_vel_b"],
+            root_ang_vel_w=motion_data["root_ang_vel_w"],
+            root_ang_vel_b=motion_data["root_ang_vel_b"],
+            root_quat_w=motion_data["root_quat_w"],
+            joint_pos=motion_data["joint_pos"],
+            joint_vel=motion_data["joint_vel"],
+            body_pos_w=motion_data["body_pos_w"],
+            body_quat_w=motion_data["body_quat_w"],
+            body_lin_vel_w=motion_data["body_lin_vel_w"],
+            body_ang_vel_w=motion_data["body_ang_vel_w"],
+            body_pos_b=motion_data["body_pos_b"],
+            body_quat_b=motion_data["body_quat_b"],
+            body_lin_vel_b=motion_data["body_lin_vel_b"],
+            body_ang_vel_b=motion_data["body_ang_vel_b"],
+        )
+
+    def get_all_motions(
+        self, dt: float, joint_names: list | None = None, body_names: list | None = None
+    ) -> Motion:
+        all_motion_ids = []
+        all_times = []
+        for motion_id in range(len(self.motion_durations)):
+            sampled_times = torch.arange(0, self.motion_durations[motion_id].item(), dt).to(self.device)
+            all_times.append(sampled_times)
+            motion_ids = torch.full_like(sampled_times, motion_id, dtype=torch.int).to(self.device)
+            all_motion_ids.append(motion_ids)
+        all_motion_ids = torch.cat(all_motion_ids)
+        all_times = torch.cat(all_times)
+        motion_data = self.get_motion_data(all_motion_ids, all_times, joint_names, body_names)
+        return Motion(
+            num_frames=all_times.shape[-1],
+            motion_ids=all_motion_ids,
             root_pos_w=motion_data["root_pos_w"],
             root_lin_vel_w=motion_data["root_lin_vel_w"],
             root_lin_vel_b=motion_data["root_lin_vel_b"],
