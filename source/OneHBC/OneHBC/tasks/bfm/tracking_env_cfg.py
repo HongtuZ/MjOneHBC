@@ -337,7 +337,7 @@ class TrackingEnvCfg(ManagerBasedRlEnvCfg):
     sim: SimulationCfg = field(
         default_factory=lambda: SimulationCfg(
             nconmax=35,
-            njmax=250,
+            njmax=512,
             mujoco=MujocoCfg(
                 timestep=0.005,
                 iterations=10,
