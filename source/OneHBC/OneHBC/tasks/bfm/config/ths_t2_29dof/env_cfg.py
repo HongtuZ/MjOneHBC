@@ -17,7 +17,7 @@ from OneHBC.tasks.bfm.tracking_env_cfg import TrackingEnvCfg
 #                                  Motions
 # -----------------------------------------------------------------------------
 
-motion_data_dir = str(ONEHBC_ROOT / "robot_assets/ths_t2_29dof/motion_data")
+motion_data_dir = str(ONEHBC_ROOT / "robot_assets/ths_t2_29dof/motion_data/")
 
 # -----------------------------------------------------------------------------
 #                                   Sensors
@@ -127,8 +127,13 @@ class Tracking_T2_FlatPlayEnvCfg(Tracking_T2_FlatEnvCfg):
         self.events.pop("push_robot", None)
         self.events["foot_friction"].params["ranges"] = (1.5, 1.5)
 
+        # Disable terminations
+        self.terminations.pop("ee_body_pos", None)
+        self.terminations.pop("anchor_pos", None)
+        self.terminations.pop("anchor_ori", None)
+        self.terminations.pop("joint_limits", None)
         # Disable RSI randomization.
         self.commands["motion"].pose_range = {}
         self.commands["motion"].velocity_range = {}
         self.commands["motion"].joint_position_range = (0.0, 0.0)
-        self.commands["motion"].sampling_mode = "start"
+        self.commands["motion"].sampling_mode = "uniform"
