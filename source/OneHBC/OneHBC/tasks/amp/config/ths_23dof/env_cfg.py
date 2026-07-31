@@ -119,7 +119,7 @@ class AmpRoughEnvCfg(AmpEnvCfg):
         self.rewards["action_rate_l2"].weight = -0.01
         self.rewards["action_acc_l2"].weight = -0.01
         self.rewards["joint_pos_limits"].weight = -10.0
-        self.rewards["flat_orientation_l2"].weight = -10.0
+        self.rewards["flat_orientation_l2"].weight = -0.1
         self.rewards["joint_deviation_exp"].weight = -0.01
         self.rewards["joint_energy"].weight = -2e-5
         self.rewards["track_lin_vel_exp"].weight = 1.0

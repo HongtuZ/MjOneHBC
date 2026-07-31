@@ -14,6 +14,13 @@ class AmpModelCfg(RslRlModelCfg):
 
 
 @dataclass
+class AmpAlgorithmCfg(RslRlPpoAlgorithmCfg):
+    """PPO algorithm config extended with AMP discriminator learning rate."""
+
+    discriminator_lr: float = 5e-4
+
+
+@dataclass
 class AmpRunnerCfg(RslRlOnPolicyRunnerCfg):
     logger: str = "tensorboard"
     upload_model = False
@@ -36,7 +43,7 @@ class AmpRunnerCfg(RslRlOnPolicyRunnerCfg):
             obs_normalization=True,
             distribution_cfg={
                 "class_name": "GaussianDistribution",
-                "init_std": 1.0,
+                "init_std": 0.5,
                 "std_type": "scalar",
             },
         )
@@ -53,12 +60,12 @@ class AmpRunnerCfg(RslRlOnPolicyRunnerCfg):
             hidden_dims=(1024, 512, 256),
             activation="elu",
             obs_normalization=True,
-            style_reward_scale=0.1,
-            task_reward_lerp=0.5,
+            style_reward_scale=1.0,
+            task_reward_lerp=0.1,
         )
     )
-    algorithm: RslRlPpoAlgorithmCfg = field(
-        default_factory=lambda: RslRlPpoAlgorithmCfg(
+    algorithm: AmpAlgorithmCfg = field(
+        default_factory=lambda: AmpAlgorithmCfg(
             value_loss_coef=1.0,
             use_clipped_value_loss=True,
             clip_param=0.2,
@@ -66,6 +73,7 @@ class AmpRunnerCfg(RslRlOnPolicyRunnerCfg):
             num_learning_epochs=5,
             num_mini_batches=4,
             learning_rate=1.0e-3,
+            discriminator_lr=5.0e-4,
             schedule="adaptive",
             gamma=0.99,
             lam=0.95,

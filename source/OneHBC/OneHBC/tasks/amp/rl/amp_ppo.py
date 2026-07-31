@@ -15,9 +15,10 @@ from .amp_discriminator import AmpDiscriminator
 
 
 class AmpPPO:
-    """Proximal Policy Optimization algorithm.
+    """Adversarial Motion Priors with Proximal Policy Optimization.
 
     Reference:
+        - Peng et al. "AMP: Adversarial Motion Priors for Stylized Physics-Based Character Control." SIGGRAPH 2021.
         - Schulman et al. "Proximal policy optimization algorithms." arXiv preprint arXiv:1707.06347 (2017).
     """
 
@@ -44,6 +45,7 @@ class AmpPPO:
         value_loss_coef: float = 1.0,
         entropy_coef: float = 0.01,
         learning_rate: float = 0.001,
+        discriminator_lr: float = 5e-4,
         max_grad_norm: float = 1.0,
         optimizer: str = "adam",
         use_clipped_value_loss: bool = True,
@@ -90,10 +92,15 @@ class AmpPPO:
         self._raw_critic = self.critic
         self._raw_discriminator = self.discriminator
 
-        # Create the optimizer
+        # Create the optimizer (actor + critic only)
         self.optimizer = resolve_optimizer(optimizer)(
-            chain(self.actor.parameters(), self.critic.parameters(), self.discriminator.parameters()), lr=learning_rate
+            chain(self.actor.parameters(), self.critic.parameters()), lr=learning_rate
         )  # type: ignore
+        # Separate optimizer for the discriminator with fixed learning rate
+        self.discriminator_optimizer = resolve_optimizer(optimizer)(
+            self.discriminator.parameters(), lr=discriminator_lr
+        )  # type: ignore
+        self.discriminator_lr = discriminator_lr
 
         # Add storage
         self.storage = storage
@@ -113,6 +120,9 @@ class AmpPPO:
         self.schedule = schedule
         self.learning_rate = learning_rate
         self.normalize_advantage_per_mini_batch = normalize_advantage_per_mini_batch
+
+        # AMP loss function (reused across mini-batches)
+        self._mse_loss = nn.MSELoss()
 
     def act(self, obs: TensorDict) -> torch.Tensor:
         """Sample actions and store transition data."""
@@ -289,7 +299,7 @@ class AmpPPO:
 
             loss = surrogate_loss + self.value_loss_coef * value_loss - self.entropy_coef * entropy.mean()
 
-            if not torch.isfinite(value_loss) or not torch.isfinite(value_loss):
+            if not torch.isfinite(surrogate_loss) or not torch.isfinite(value_loss):
                 continue
 
             # RND loss
@@ -301,18 +311,29 @@ class AmpPPO:
                 if self.symmetry.use_mirror_loss:
                     loss = loss + self.symmetry.mirror_loss_coeff * symmetry_loss
 
-            # AMP discriminator loss
+            # AMP discriminator loss (update discriminator separately)
             amp_policy_pred = self.discriminator(batch.observations)
-            batch.observations.del_("discriminator")
-            batch.observations.rename_key_("discriminator_expert", "discriminator")
-            amp_expert_pred = self.discriminator(batch.observations)
-            amp_policy_loss = torch.nn.MSELoss()(amp_policy_pred, -torch.ones_like(amp_policy_pred))
-            amp_expert_loss = torch.nn.MSELoss()(amp_expert_pred, torch.ones_like(amp_expert_pred))
+            # Clone observations to avoid corrupting storage data across epochs
+            expert_obs = batch.observations.clone()
+            expert_obs.del_("discriminator")
+            expert_obs.rename_key_("discriminator_expert", "discriminator")
+            amp_expert_pred = self.discriminator(expert_obs)
+            amp_policy_loss = self._mse_loss(amp_policy_pred, -torch.ones_like(amp_policy_pred))
+            amp_expert_loss = self._mse_loss(amp_expert_pred, torch.ones_like(amp_expert_pred))
             amp_loss = 0.5 * (amp_policy_loss + amp_expert_loss)
-            amp_grad_panalty = self.discriminator.compute_grad_penalty(batch.observations, lambda_=10)
-            loss += amp_loss + amp_grad_panalty
+            amp_grad_penalty = self.discriminator.compute_grad_penalty(expert_obs, lambda_=10)
+            disc_loss = amp_loss + amp_grad_penalty
 
-            # Compute the gradients for PPO
+            # Update discriminator with its own optimizer
+            self.discriminator_optimizer.zero_grad()
+            disc_loss.backward()
+            nn.utils.clip_grad_norm_(self.discriminator.parameters(), self.max_grad_norm)
+            # Collect gradients from all GPUs for discriminator
+            if self.is_multi_gpu:
+                self._reduce_gradients(self.discriminator.parameters())
+            self.discriminator_optimizer.step()
+
+            # Compute the gradients for PPO (actor + critic only)
             self.optimizer.zero_grad()
             loss.backward()
             # Compute the gradients for RND
@@ -320,7 +341,7 @@ class AmpPPO:
                 self.rnd.optimizer.zero_grad()
                 rnd_loss.backward()
 
-            # Collect gradients from all GPUs
+            # Collect gradients from all GPUs for actor/critic
             if self.is_multi_gpu:
                 self.reduce_parameters()
 
@@ -346,7 +367,7 @@ class AmpPPO:
             mean_amp_loss += amp_loss.item()
             mean_amp_policy_pred += amp_policy_pred.mean().item()
             mean_amp_expert_pred += amp_expert_pred.mean().item()
-            mean_amp_grad_penalty_loss += amp_grad_panalty.item()
+            mean_amp_grad_penalty_loss += amp_grad_penalty.item()
             # Valid update
             valid_update_cnt += 1
 
@@ -406,7 +427,8 @@ class AmpPPO:
             "actor_state_dict": self._raw_actor.state_dict(),
             "critic_state_dict": self._raw_critic.state_dict(),
             "optimizer_state_dict": self.optimizer.state_dict(),
-            "discriminator_state_dict": self.discriminator.state_dict(),
+            "discriminator_state_dict": self._raw_discriminator.state_dict(),
+            "discriminator_optimizer_state_dict": self.discriminator_optimizer.state_dict(),
         }
         if self.rnd:
             saved_dict["rnd_state_dict"] = self.rnd.state_dict()
@@ -421,6 +443,7 @@ class AmpPPO:
                 "actor": True,
                 "critic": True,
                 "optimizer": True,
+                "discriminator": True,
                 "iteration": True,
                 "rnd": True,
             }
@@ -434,6 +457,8 @@ class AmpPPO:
             self.optimizer.load_state_dict(loaded_dict["optimizer_state_dict"])
         if load_cfg.get("discriminator"):
             self._raw_discriminator.load_state_dict(loaded_dict["discriminator_state_dict"], strict=strict)
+            if "discriminator_optimizer_state_dict" in loaded_dict:
+                self.discriminator_optimizer.load_state_dict(loaded_dict["discriminator_optimizer_state_dict"])
         if load_cfg.get("rnd") and self.rnd:
             self.rnd.load_state_dict(loaded_dict["rnd_state_dict"], strict=strict)
             self.rnd.optimizer.load_state_dict(loaded_dict["rnd_optimizer_state_dict"])
@@ -521,16 +546,21 @@ class AmpPPO:
             self.rnd.predictor.load_state_dict(model_params[3])
 
     def reduce_parameters(self) -> None:
-        """Collect gradients from all GPUs and average them.
+        """Collect gradients from all GPUs and average them for actor/critic.
 
         This function is called after the backward pass to synchronize the gradients across all GPUs.
         """
-        # Create a tensor to store the gradients
-        all_params = chain(self.actor.parameters(), self.critic.parameters(), self.discriminator.parameters())
+        params = list(chain(self.actor.parameters(), self.critic.parameters()))
         if self.rnd:
-            all_params = chain(all_params, self.rnd.parameters())
-        all_params = list(all_params)
+            params += list(self.rnd.parameters())
+        self._reduce_gradients(params)
+
+    def _reduce_gradients(self, parameters) -> None:
+        """Collect and average gradients across all GPUs for given parameters."""
+        all_params = list(parameters)
         grads = [param.grad.view(-1) for param in all_params if param.grad is not None]
+        if not grads:
+            return
         all_grads = torch.cat(grads)
         # Average the gradients across all GPUs
         torch.distributed.all_reduce(all_grads, op=torch.distributed.ReduceOp.SUM)

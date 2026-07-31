@@ -14,6 +14,13 @@ class AmpModelCfg(RslRlModelCfg):
 
 
 @dataclass
+class AmpAlgorithmCfg(RslRlPpoAlgorithmCfg):
+    """PPO algorithm config extended with AMP discriminator learning rate."""
+
+    discriminator_lr: float = 5e-4
+
+
+@dataclass
 class AmpRunnerCfg(RslRlOnPolicyRunnerCfg):
     logger: str = "tensorboard"
     upload_model = False
@@ -57,8 +64,8 @@ class AmpRunnerCfg(RslRlOnPolicyRunnerCfg):
             task_reward_lerp=0.3,
         )
     )
-    algorithm: RslRlPpoAlgorithmCfg = field(
-        default_factory=lambda: RslRlPpoAlgorithmCfg(
+    algorithm: AmpAlgorithmCfg = field(
+        default_factory=lambda: AmpAlgorithmCfg(
             value_loss_coef=1.0,
             use_clipped_value_loss=True,
             clip_param=0.2,
@@ -66,6 +73,7 @@ class AmpRunnerCfg(RslRlOnPolicyRunnerCfg):
             num_learning_epochs=5,
             num_mini_batches=4,
             learning_rate=1.0e-3,
+            discriminator_lr=5.0e-4,
             schedule="adaptive",
             gamma=0.99,
             lam=0.95,
