@@ -156,8 +156,8 @@ class MotionEditor:
 
         # ── robot transparency: bake 30% opacity into geom/material RGBA ──
         # (must be set BEFORE ViserMujocoScene builds the meshes)
-        self.model.geom_rgba[:, 3] = 0.3
-        self.model.mat_rgba[:, 3] = 0.3
+        self.model.geom_rgba[:, 3] = 0.7
+        self.model.mat_rgba[:, 3] = 0.7
         # Ensure the baked alpha actually renders (GLB alphaMode=BLEND)
         _enable_mjviser_mesh_transparency()
 
@@ -327,7 +327,7 @@ class MotionEditor:
             # ── Smoothing ──
             gui.add_markdown("---")
             gui.add_markdown("**平滑优化 (A→B)**")
-            self.smooth_alpha = gui.add_number("α 平滑强度", min=0.001, max=100.0, step=0.1, initial_value=1.0)
+            self.smooth_alpha = gui.add_number("α 平滑强度", min=0.001, max=1.0, step=0.01, initial_value=0.1)
             with gui.add_folder("平滑目标"):
                 self.smooth_root = gui.add_checkbox("Root Pos/Quat", initial_value=True)
                 self.smooth_joints = gui.add_checkbox("Joints", initial_value=True)
@@ -601,7 +601,7 @@ class MotionEditor:
             self.smooth_label.content = "⚠️ **请至少选择一种平滑目标！**"
             return
 
-        alpha = float(self.smooth_alpha.value)
+        alpha = 0.1 * float(self.smooth_alpha.value)
         # Save state for undo
         self._pre_interp_state = (
             self.edit_root_pos.copy(),
