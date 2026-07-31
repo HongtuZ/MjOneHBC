@@ -24,17 +24,49 @@ import joblib
 import mjviser
 import mujoco
 import numpy as np
+import trimesh.visual
 import viser
 import viser.transforms as vtf
-from viser._messages import SetCameraLookAtMessage
+from scipy.linalg import solve_banded
 
-# ─────────────────────────── helpers ────────────────────────────────────────────
+# ─────────────────────────── helpers ────────────────────────────────────────
 
 
-def quat_wxyz_to_xyzw(q: np.ndarray) -> np.ndarray:
-    """Convert quaternion from wxyz to xyzw format (mujoco convention)."""
-    q = np.asarray(q)
-    return np.concatenate([q[..., 1:], q[..., :1]], axis=-1)
+def _enable_mjviser_mesh_transparency() -> None:
+    """Patch mjviser's merge_geoms so exported GLB meshes render transparent.
+
+    mjviser bakes geom colors into vertex colors (ColorVisuals), which export to
+    GLB without any material, so three.js renders them opaque and ignores the
+    vertex alpha channel. This wraps merge_geoms to convert each merged mesh's
+    visual into a TextureVisuals carrying an alphaMode="BLEND" material while
+    preserving the vertex colors, so the alpha channel actually takes effect.
+    """
+    import mjviser.scene as _mj_scene
+
+    if getattr(_mj_scene, "_transparent_patched", False):
+        return
+    _orig_merge_geoms = _mj_scene.merge_geoms
+
+    def _merge_geoms_transparent(mj_model, geom_ids):
+        mesh = _orig_merge_geoms(mj_model, geom_ids)
+        try:
+            if mesh.visual.kind in ("vertex", "face"):
+                vc = mesh.visual.vertex_colors.copy()
+                mat = trimesh.visual.material.PBRMaterial(
+                    baseColorFactor=[1.0, 1.0, 1.0, 1.0],
+                    metallicFactor=0.0,
+                    roughnessFactor=1.0,
+                    alphaMode="BLEND",
+                )
+                tv = trimesh.visual.TextureVisuals(material=mat)
+                tv.vertex_attributes = {"color": vc}
+                mesh.visual = tv
+        except Exception:
+            pass
+        return mesh
+
+    _mj_scene.merge_geoms = _merge_geoms_transparent
+    _mj_scene._transparent_patched = True
 
 
 def slerp(q0: np.ndarray, q1: np.ndarray, t: float) -> np.ndarray:
@@ -58,39 +90,6 @@ def slerp(q0: np.ndarray, q1: np.ndarray, t: float) -> np.ndarray:
 
 def lerp(a: np.ndarray, b: np.ndarray, t: float) -> np.ndarray:
     return a + t * (b - a)
-
-
-def _quat_mul(q1: np.ndarray, q2: np.ndarray) -> np.ndarray:
-    """Quaternion multiplication (wxyz format)."""
-    w1, x1, y1, z1 = q1
-    w2, x2, y2, z2 = q2
-    return np.array(
-        [
-            w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
-            w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
-            w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
-            w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
-        ]
-    )
-
-
-def _quat_conjugate(q: np.ndarray) -> np.ndarray:
-    """Quaternion conjugate/inverse (wxyz format, assumes unit quaternion)."""
-    return np.array([q[0], -q[1], -q[2], -q[3]])
-
-
-def _quat_to_yaw(q: np.ndarray) -> float:
-    """Extract yaw angle from quaternion (wxyz format)."""
-    w, x, y, z = q
-    # Yaw = rotation around Z axis
-    siny_cosp = 2.0 * (w * z + x * y)
-    cosy_cosp = 1.0 - 2.0 * (y * y + z * z)
-    return np.arctan2(siny_cosp, cosy_cosp)
-
-
-def _yaw_to_quat(yaw: float) -> np.ndarray:
-    """Create quaternion from yaw angle (wxyz format)."""
-    return np.array([np.cos(yaw / 2), 0, 0, np.sin(yaw / 2)])
 
 
 # ─────────────────────────── MotionEditor ───────────────────────────────────────
@@ -117,13 +116,10 @@ class MotionEditor:
         self.root_quat_w = np.array(raw["root_quat_w"], dtype=np.float64)  # (F, 4)
         self.joint_pos = np.array(raw["joint_pos"], dtype=np.float64)  # (F, nj)
 
-        # ── joint mapping ──
-        self.mj_joint_qpos_addr: list[int] = []
+        # ── validate that all motion joints exist in the MuJoCo model ──
         for jname in self.motion_joint_names:
-            mj_idx = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, jname)
-            if mj_idx < 0:
+            if mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, jname) < 0:
                 raise ValueError(f"Joint '{jname}' not found in MuJoCo model")
-            self.mj_joint_qpos_addr.append(self.model.jnt_qposadr[mj_idx])
 
         # ── working copy of motion data (editable) ──
         self.edit_root_pos = self.root_pos_w.copy()
@@ -136,27 +132,34 @@ class MotionEditor:
         self.play_speed = 1.0
         self.keyframe_a: int | None = None
         self.keyframe_b: int | None = None
-        self._camera_follow = False
         self._segment_play = False  # play only keyframe_a..keyframe_b
         self._pre_interp_state = None  # for undo
         self._mj_lock = threading.Lock()  # protect MuJoCo data access
+        self._playback_path = []  # list of root_pos for green trajectory line
+        self._green_line_created = False
+        self._prev_frame = -1  # previous frame index for trajectory tracking
+        self._suppress_edit_callbacks = False  # guard: ignore edit callbacks while syncing GUI
 
         # ── viser server + mjviser scene ──
         self.server = viser.ViserServer(port=port)
         self.server.scene.set_up_direction("+z")
 
-        # ── add ground grid and world axes ──
+        # ── add ground grid; use viser's built-in world axes ──
         self.server.scene.add_grid(
             name="/ground_grid",
             width=20.0,
             height=20.0,
             position=(0, 0, 0),
         )
-        self.server.scene.add_frame(
-            name="/world_axes",
-            axes_length=1.0,
-            axes_radius=0.01,
-        )
+        # Show viser's built-in world axes by default
+        self.server.scene.world_axes.visible = True
+
+        # ── robot transparency: bake 30% opacity into geom/material RGBA ──
+        # (must be set BEFORE ViserMujocoScene builds the meshes)
+        self.model.geom_rgba[:, 3] = 0.3
+        self.model.mat_rgba[:, 3] = 0.3
+        # Ensure the baked alpha actually renders (GLB alphaMode=BLEND)
+        _enable_mjviser_mesh_transparency()
 
         # mjviser handles all mesh loading, body visualization, etc.
         self.mj_scene = mjviser.ViserMujocoScene(
@@ -164,13 +167,21 @@ class MotionEditor:
             mj_model=self.model,
             num_envs=1,
         )
-        # Camera tracking: follow robot root_pos
-        self.mj_scene.camera_tracking_enabled = False  # start disabled
+        # Disable camera tracking by default (Track camera unchecked)
+        self.mj_scene.camera_tracking_enabled = False
         # Add visualization GUI tabs from mjviser
-        tab_group = self.mj_scene.create_visualization_gui()
-        # Ensure tracked body is base_link (body 1)
-        self.mj_scene._tracked_body_id = 1
+        self.mj_scene.create_visualization_gui()
 
+        # ── trajectory visualization (point clouds, no flashing) ──
+        # Red points: original root_pos trajectory
+        orig_pts = np.array(self.root_pos_w, dtype=np.float32)
+        self.server.scene.add_point_cloud(
+            name="/traj_original",
+            points=orig_pts,
+            colors=(255, 0, 0),
+            point_size=0.005,
+            point_shape="circle",
+        )
         # ── build custom GUI ──
         self._build_gui()
 
@@ -200,12 +211,34 @@ class MotionEditor:
         with self._mj_lock:
             self._apply_frame_to_mjdata(frame_idx)
             self.mj_scene.update_from_mjdata(self.data)
-            # Camera follow: only update look-at point, allow user to orbit freely
-            if self._camera_follow:
-                root_pos = self.data.xpos[1]  # base_link
-                self.server._websock_server.queue_message(
-                    SetCameraLookAtMessage(look_at=(float(root_pos[0]), float(root_pos[1]), float(root_pos[2])))
+            root_pos = self.data.xpos[1].copy()  # base_link
+
+        # Update green trajectory based on frame changes (works for play/scrub/step)
+        if frame_idx != self._prev_frame:
+            if frame_idx == self._prev_frame + 1:
+                # Consecutive frame: append to path
+                self._playback_path.append(root_pos.copy())
+            else:
+                # Frame jumped/scrubbed/looped: clear and restart from current frame
+                self._playback_path = [root_pos.copy()]
+                if self._green_line_created:
+                    self.server.scene.remove_by_name("/traj_played")
+                    self._green_line_created = False
+            self._prev_frame = frame_idx
+
+            # Draw green points whenever frame changes (need >= 2 points)
+            if len(self._playback_path) > 1:
+                pts = np.array(self._playback_path, dtype=np.float32)
+                if self._green_line_created:
+                    self.server.scene.remove_by_name("/traj_played")
+                self.server.scene.add_point_cloud(
+                    name="/traj_played",
+                    points=pts,
+                    colors=(0, 255, 0),
+                    point_size=0.0055,
+                    point_shape="circle",
                 )
+                self._green_line_created = True
 
     # ─────────────────── GUI ──────────────────────────────────────────────────
 
@@ -229,14 +262,16 @@ class MotionEditor:
                 initial_value=0,
             )
             self.frame_slider.on_update(self._on_frame_change)
-            self._frame_slider_max = self.num_frames - 1
 
             self.frame_label = gui.add_markdown(f"**Frame:** 0 / {self.num_frames - 1}")
-            self.time_label = gui.add_markdown("**Time:** 0.000 s")
 
-            # Camera follow toggle
-            self.camera_follow_btn = gui.add_button("📷 Camera Follow: OFF")
-            self.camera_follow_btn.on_click(self._on_camera_follow_toggle)
+            # Frame step buttons
+            self.frame_minus_btn = gui.add_button("◀ -1")
+            self.frame_minus_btn.on_click(self._on_frame_minus)
+            self.frame_plus_btn = gui.add_button("+1 ▶")
+            self.frame_plus_btn.on_click(self._on_frame_plus)
+
+            self.time_label = gui.add_markdown("**Time:** 0.000 s")
 
         # ── Frame editing (uses current playback frame) ──
         with gui.add_folder("Edit Frame"):
@@ -272,6 +307,10 @@ class MotionEditor:
                 self.root_pitch = gui.add_slider("Pitch", min=-3.14, max=3.14, step=0.01, initial_value=0)
                 self.root_yaw = gui.add_slider("Yaw", min=-3.14, max=3.14, step=0.01, initial_value=0)
 
+            # Reset the current frame's data back to the original motion
+            self.reset_frame_btn = gui.add_button("↩ Reset This Frame")
+            self.reset_frame_btn.on_click(self._on_reset_frame)
+
         # ── Keyframe interpolation ──
         with gui.add_folder("Keyframe Interpolation"):
             self.kf_label = gui.add_markdown("**Keyframe A:** —  **Keyframe B:** —")
@@ -282,8 +321,19 @@ class MotionEditor:
             self.set_b_btn = gui.add_button("📌 Set Current Frame as B")
             self.set_b_btn.on_click(self._on_set_keyframe_b)
 
-            self.interpolate_btn = gui.add_button("🔄 Interpolate")
+            self.interpolate_btn = gui.add_button("🔄 Interpolate A→B")
             self.interpolate_btn.on_click(self._on_interpolate)
+
+            # ── Smoothing ──
+            gui.add_markdown("---")
+            gui.add_markdown("**平滑优化 (A→B)**")
+            self.smooth_alpha = gui.add_number("α 平滑强度", min=0.001, max=100.0, step=0.1, initial_value=1.0)
+            with gui.add_folder("平滑目标"):
+                self.smooth_root = gui.add_checkbox("Root Pos/Quat", initial_value=True)
+                self.smooth_joints = gui.add_checkbox("Joints", initial_value=True)
+            self.smooth_btn = gui.add_button("✨ Smooth A→B")
+            self.smooth_btn.on_click(self._on_smooth)
+            self.smooth_label = gui.add_markdown("")
 
             # Undo and segment play (hidden until interpolation is done)
             self.undo_interp_btn = gui.add_button("↩ Undo Interpolation")
@@ -343,6 +393,7 @@ class MotionEditor:
             with self.server.atomic():
                 self.frame_slider.value = self.current_frame
                 self._update_frame_info()
+                self._update_edit_frame_gui(self.current_frame)
             time.sleep(self.dt / self.play_speed)
             if not self.playing:
                 break
@@ -365,8 +416,28 @@ class MotionEditor:
         self.current_frame = int(self.frame_slider.value)
         self._update_visualization(self.current_frame)
         self._update_frame_info()
-        # NOTE: do NOT call _update_edit_frame_gui here — it triggers
-        # edit slider callbacks that can corrupt edit data.
+        self._update_edit_frame_gui(self.current_frame)
+
+    def _on_frame_minus(self, _):
+        """Step frame backward by 1."""
+        if self.playing:
+            return
+        self.current_frame = max(0, self.current_frame - 1)
+        self.frame_slider.value = self.current_frame
+        self._update_visualization(self.current_frame)
+        self._update_frame_info()
+        self._update_edit_frame_gui(self.current_frame)
+
+    def _on_frame_plus(self, _):
+        """Step frame forward by 1."""
+        if self.playing:
+            return
+        total = len(self.edit_root_pos)
+        self.current_frame = min(total - 1, self.current_frame + 1)
+        self.frame_slider.value = self.current_frame
+        self._update_visualization(self.current_frame)
+        self._update_frame_info()
+        self._update_edit_frame_gui(self.current_frame)
 
     def _update_frame_info(self):
         """Update frame/time display labels."""
@@ -376,36 +447,28 @@ class MotionEditor:
         self.edit_info.content = f"**Editing frame:** {self.current_frame}"
         self.anchor_info.content = f"当前帧: **{self.current_frame}**"
 
-    def _on_camera_follow_toggle(self, _):
-        self._camera_follow = not self._camera_follow
-        if self._camera_follow:
-            self.camera_follow_btn.label = "📷 Camera Follow: ON"
-            # Immediately send look-at for current frame (thread-safe)
-            with self._mj_lock:
-                self._apply_frame_to_mjdata(self.current_frame)
-                root_pos = self.data.xpos[1]
-            self.server._websock_server.queue_message(
-                SetCameraLookAtMessage(look_at=(float(root_pos[0]), float(root_pos[1]), float(root_pos[2])))
-            )
-        else:
-            self.camera_follow_btn.label = "📷 Camera Follow: OFF"
-
     def _update_edit_frame_gui(self, frame: int):
         """Update the edit GUI to reflect the selected frame's values."""
-        # Update root position sliders
-        self.root_px.value = float(self.edit_root_pos[frame, 0])
-        self.root_py.value = float(self.edit_root_pos[frame, 1])
-        self.root_pz.value = float(self.edit_root_pos[frame, 2])
+        # Suppress edit callbacks while programmatically setting slider values,
+        # otherwise they would write back and corrupt data (e.g. quat RPY round-trip).
+        self._suppress_edit_callbacks = True
+        try:
+            # Update root position sliders
+            self.root_px.value = float(self.edit_root_pos[frame, 0])
+            self.root_py.value = float(self.edit_root_pos[frame, 1])
+            self.root_pz.value = float(self.edit_root_pos[frame, 2])
 
-        # Update root orientation (convert quat to euler)
-        so3 = vtf.SO3.from_quaternion_xyzw(self.edit_root_quat[frame])
-        rpy = so3.as_rpy_radians()
-        self.root_roll.value = float(rpy[0])
-        self.root_pitch.value = float(rpy[1])
-        self.root_yaw.value = float(rpy[2])
+            # Update root orientation (convert quat to euler)
+            so3 = vtf.SO3.from_quaternion_xyzw(self.edit_root_quat[frame])
+            rpy = so3.as_rpy_radians()
+            self.root_roll.value = float(rpy[0])
+            self.root_pitch.value = float(rpy[1])
+            self.root_yaw.value = float(rpy[2])
 
-        # Update joint slider
-        self._on_joint_select(None)
+            # Update joint slider
+            self._on_joint_select(None)
+        finally:
+            self._suppress_edit_callbacks = False
 
         self.edit_info.content = f"**Editing frame:** {frame}"
 
@@ -420,6 +483,8 @@ class MotionEditor:
 
     def _on_joint_value_change(self, _):
         """Apply joint value change to the current frame."""
+        if self._suppress_edit_callbacks:
+            return
         frame = self.current_frame
         jname = self.joint_dropdown.value
         if jname in self.motion_joint_names:
@@ -429,6 +494,8 @@ class MotionEditor:
 
     def _on_root_pos_change(self, _):
         """Apply root position change to the current frame."""
+        if self._suppress_edit_callbacks:
+            return
         frame = self.current_frame
         self.edit_root_pos[frame, 0] = self.root_px.value
         self.edit_root_pos[frame, 1] = self.root_py.value
@@ -437,6 +504,8 @@ class MotionEditor:
 
     def _on_root_orient_change(self, _):
         """Apply root orientation change (from RPY) to the current frame."""
+        if self._suppress_edit_callbacks:
+            return
         frame = self.current_frame
         roll = self.root_roll.value
         pitch = self.root_pitch.value
@@ -444,6 +513,15 @@ class MotionEditor:
         so3 = vtf.SO3.from_rpy_radians(roll, pitch, yaw)
         self.edit_root_quat[frame] = so3.as_quaternion_xyzw()
         self._update_visualization(frame)
+
+    def _on_reset_frame(self, _):
+        """Reset the current frame's data back to the original motion values."""
+        frame = self.current_frame
+        self.edit_root_pos[frame] = self.root_pos_w[frame].copy()
+        self.edit_root_quat[frame] = self.root_quat_w[frame].copy()
+        self.edit_joint_pos[frame] = self.joint_pos[frame].copy()
+        self._update_visualization(frame)
+        self._update_edit_frame_gui(frame)
 
     def _on_set_keyframe_a(self, _):
         """Set current frame as keyframe A (start)."""
@@ -499,6 +577,117 @@ class MotionEditor:
         self.undo_interp_btn.visible = True
         self.seg_play_btn.visible = True
 
+    def _on_smooth(self, _):
+        """Smooth trajectory between keyframe A and B.
+
+        Minimizes: L = sum_t (x'_t - x_t)^2 + alpha * (x'_{t+1} - 2x'_t + x'_{t-1})^2
+        This is a quadratic optimization with a pentadiagonal linear system.
+        """
+        fa = self.keyframe_a
+        fb = self.keyframe_b
+        if fa is None or fb is None:
+            self.smooth_label.content = "⚠️ **请先设置 A/B 关键帧！**"
+            return
+        if fa >= fb:
+            self.smooth_label.content = "⚠️ **结束帧必须大于开始帧！**"
+            return
+        if fb - fa < 3:
+            self.smooth_label.content = "⚠️ **A/B 之间至少需要 3 帧！**"
+            return
+
+        smooth_root = self.smooth_root.value
+        smooth_joints = self.smooth_joints.value
+        if not smooth_root and not smooth_joints:
+            self.smooth_label.content = "⚠️ **请至少选择一种平滑目标！**"
+            return
+
+        alpha = float(self.smooth_alpha.value)
+        # Save state for undo
+        self._pre_interp_state = (
+            self.edit_root_pos.copy(),
+            self.edit_root_quat.copy(),
+            self.edit_joint_pos.copy(),
+        )
+        n = fb - fa - 1  # number of interior points
+        # Build banded matrix for solve_banded (l=u=2)
+        ab = np.zeros((5, n), dtype=np.float64)
+        ab[2, :] = 1.0 + 6.0 * alpha  # main diagonal
+        ab[1, 1:] = -2.0 * alpha  # +1 super-diagonal
+        ab[3, :-1] = -2.0 * alpha  # -1 sub-diagonal
+        ab[0, 2:] = alpha  # +2 super-diagonal
+        ab[4, :-2] = alpha  # -2 sub-diagonal
+
+        # Collect data channels based on selection
+        channels = []
+        channel_info = []  # (data_array, channel_idx, frame_range)
+
+        if smooth_root:
+            for c in range(3):  # root_pos
+                channels.append(self.edit_root_pos[fa : fb + 1, c])
+                channel_info.append(("root_pos", c))
+            for c in range(4):  # root_quat
+                channels.append(self.edit_root_quat[fa : fb + 1, c])
+                channel_info.append(("root_quat", c))
+
+        if smooth_joints:
+            nj = self.edit_joint_pos.shape[1]
+            for c in range(nj):  # joint_pos
+                channels.append(self.edit_joint_pos[fa : fb + 1, c])
+                channel_info.append(("joint_pos", c))
+
+        data = np.array(channels)  # (C, fb-fa+1)
+
+        # RHS = x_i + α*(x_{i+1} - 2x_i + x_{i-1}) for each interior point
+        rhs = data[:, 1:-1].copy()  # (C, n)
+        for i in range(n):
+            col = i + 1  # column in data
+            d2 = data[:, col + 1] - 2 * data[:, col] + data[:, col - 1]
+            rhs[:, i] += alpha * d2
+
+        # Boundary contributions (fixed endpoints)
+        x_a = data[:, 0]
+        x_b = data[:, -1]
+        rhs[:, 0] += alpha * x_a
+        if n > 1:
+            rhs[:, 1] -= alpha * x_a
+        if n > 2:
+            rhs[:, n - 2] -= alpha * x_b
+        rhs[:, n - 1] += alpha * x_b
+
+        # Solve banded system for all channels
+        result = solve_banded((2, 2), ab, rhs.T).T  # (C, n)
+
+        # Write back smoothed values
+        for idx, (dtype, c) in enumerate(channel_info):
+            if dtype == "root_pos":
+                self.edit_root_pos[fa + 1 : fb, c] = result[idx, :]
+            elif dtype == "root_quat":
+                self.edit_root_quat[fa + 1 : fb, c] = result[idx, :]
+            elif dtype == "joint_pos":
+                self.edit_joint_pos[fa + 1 : fb, c] = result[idx, :]
+
+        # Re-normalize quaternions if root was smoothed
+        if smooth_root:
+            for i in range(fa + 1, fb):
+                q = self.edit_root_quat[i]
+                norm = np.linalg.norm(q)
+                if norm > 1e-8:
+                    self.edit_root_quat[i] = q / norm
+
+        # Update visualization
+        self._update_visualization(self.current_frame)
+
+        # Build description
+        targets = []
+        if smooth_root:
+            targets.append("Root")
+        if smooth_joints:
+            targets.append("Joints")
+        target_str = " + ".join(targets)
+        self.smooth_label.content = f"✅ 已平滑帧 {fa} → {fb} (α={alpha}, 目标={target_str})"
+        self.undo_interp_btn.visible = True
+        self.seg_play_btn.visible = True
+
     def _on_undo_interpolate(self, _):
         """Undo the last interpolation or anchor insertion."""
         if self._pre_interp_state is not None:
@@ -542,6 +731,7 @@ class MotionEditor:
                 self.frame_slider.value = self.current_frame
                 self._update_frame_info()
             # Auto-start playback if not already playing
+            # (green trajectory is handled by frame-change detection in _update_visualization)
             if not self.playing:
                 self.playing = True
                 self.play_btn.label = "⏸ Pause"
