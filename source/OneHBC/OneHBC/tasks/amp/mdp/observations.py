@@ -69,14 +69,18 @@ def robot_body_lin_vel_b(
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=()),
 ) -> torch.Tensor:
     asset: Entity = env.scene[asset_cfg.name]
+    # NOTE: transform into the root(base) frame, NOT each link's own frame. This must
+    # match the expert representation in MotionLoader.get_motion_data (body_lin_vel_b
+    # uses root_quat_w), otherwise the discriminator can trivially separate policy and
+    # expert samples by velocity features alone and the style reward collapses.
+    root_quat_w = asset.data.root_link_quat_w
     body_lin_vel_w = asset.data.body_link_lin_vel_w[:, asset_cfg.body_ids]  # (num_envs, num_bodies, 3)
-    body_quat_w = asset.data.body_link_quat_w[:, asset_cfg.body_ids]  # (num_envs, num_bodies, 4)
 
     num_bodies = body_lin_vel_w.shape[1]
     body_lin_vel_b = quat_apply_inverse(
-        body_quat_w.reshape(-1, 4),
-        body_lin_vel_w.reshape(-1, 3),
-    ).reshape(env.num_envs, num_bodies, 3)
+        root_quat_w.unsqueeze(1).expand(-1, num_bodies, -1),
+        body_lin_vel_w,
+    )
     return body_lin_vel_b.reshape(env.num_envs, -1)
 
 
@@ -85,14 +89,15 @@ def robot_body_ang_vel_b(
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=()),
 ) -> torch.Tensor:
     asset: Entity = env.scene[asset_cfg.name]
+    # NOTE: root(base) frame to stay consistent with MotionLoader body_ang_vel_b.
+    root_quat_w = asset.data.root_link_quat_w
     body_ang_vel_w = asset.data.body_link_ang_vel_w[:, asset_cfg.body_ids]  # (num_envs, num_bodies, 3)
-    body_quat_w = asset.data.body_link_quat_w[:, asset_cfg.body_ids]  # (num_envs, num_bodies, 4)
 
     num_bodies = body_ang_vel_w.shape[1]
     body_ang_vel_b = quat_apply_inverse(
-        body_quat_w.reshape(-1, 4),
-        body_ang_vel_w.reshape(-1, 3),
-    ).reshape(env.num_envs, num_bodies, 3)
+        root_quat_w.unsqueeze(1).expand(-1, num_bodies, -1),
+        body_ang_vel_w,
+    )
     return body_ang_vel_b.reshape(env.num_envs, -1)
 
 

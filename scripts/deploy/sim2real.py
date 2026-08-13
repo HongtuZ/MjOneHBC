@@ -22,11 +22,7 @@ class RealController(BaseRobotController):
         super().__init__(model_path, obs_names)
 
     def _create_env(self):
-        return ThsRealEnv(
-            physic_dt=0.005,
-            decimation=4,
-            action_joint_cfg=self.policy.action_joint_cfg,
-        )
+        return ThsRealEnv(physic_dt=0.005, decimation=4, action_joint_cfg=self.policy.action_joint_cfg, imu_type="wit")
 
     def _reset_env(self) -> dict[str, np.ndarray | list | tuple]:
         return self.env.reset()

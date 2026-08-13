@@ -46,7 +46,8 @@ class ButtonState:
 
 
 def stick2cmd(x: float, cmd_min: float, cmd_max: float) -> float:
-    return x * (cmd_max if x > 0 else cmd_min)
+    """将 [-1, 1] 摇杆输入映射到 [cmd_min, cmd_max]，cmd_min 应为负值."""
+    return x * (cmd_max if x > 0 else -cmd_min)
 
 
 # ==================== 抽象基类 ====================
@@ -104,11 +105,9 @@ class BaseRobotController(ABC):
     # ---------------- 可选钩子 ----------------
     def _on_step_start(self) -> None:
         """env.step() 之前调用."""
-        pass
 
     def _on_step_end(self) -> None:
         """env.step() 之后调用（子类应在此轮询手柄）."""
-        pass
 
     def close(self) -> None:
         self.env.close()

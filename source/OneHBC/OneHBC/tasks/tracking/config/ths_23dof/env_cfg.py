@@ -17,7 +17,7 @@ from OneHBC.tasks.tracking.tracking_env_cfg import TrackingEnvCfg
 #                                  Motions
 # -----------------------------------------------------------------------------
 
-dance_motion_file = str(ONEHBC_ROOT / "robot_assets/ths_23dof/motion_data/dance/dance1_subject2_startstand.pkl")
+dance_motion_file = str(ONEHBC_ROOT / "robot_assets/ths_23dof/motion_data/dance/dance1_subject2.csv")
 getup_motion_file = str(ONEHBC_ROOT / "robot_assets/ths_23dof/motion_data/getup/paziqishen_endextend.pkl")
 falldown_motion_file = str(ONEHBC_ROOT / "robot_assets/ths_23dof/motion_data/falldown/daodi_000_extended.pkl")
 

@@ -15,6 +15,7 @@ class ThsRealEnv:
         physic_dt: float,
         decimation: int,
         action_joint_cfg: list[ActionJointCfg],
+        imu_type: str = "wit",
     ):
         self.enable_control = False
         self.dt = physic_dt
@@ -38,7 +39,7 @@ class ThsRealEnv:
             motor_config.default_kd = self.kd[idx]
 
         self.motor_driver = MotorDriver(THS_MOTORS, joint_order=self.action_joint_names)
-        self.imu = IMUReader(cpu_id=0)
+        self.imu = IMUReader(cpu_id=0, imu_type=imu_type)
 
     def step(
         self,

@@ -79,8 +79,8 @@ class AmpRoughEnvCfg(AmpEnvCfg):
         self.events["base_mass"].params["asset_cfg"].body_names = ("base_link",)
         self.events["body_mass"].params["asset_cfg"].body_names = ("left_.*_link", "right_.*_link")
         self.events["foot_friction"].params["asset_cfg"].geom_names = r"^(left|right)_foot[1-9]_collision$"
-        self.events["reset_from_motion_data"].params["motion_data_dir"] = AMP_MOTION_DATA_DIR
-        self.events["reset_from_motion_data"].params["motion_data_weights"] = AMP_MOTION_DATA_WEIGHTS
+        # self.events["reset_from_motion_data"].params["motion_data_dir"] = AMP_MOTION_DATA_DIR
+        # self.events["reset_from_motion_data"].params["motion_data_weights"] = AMP_MOTION_DATA_WEIGHTS
 
         # Terminations
         self.terminations["delay_bad_orientation"] = TerminationTermCfg(

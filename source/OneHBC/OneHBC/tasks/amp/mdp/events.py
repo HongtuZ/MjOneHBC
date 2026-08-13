@@ -43,7 +43,8 @@ class reset_from_motion_data:
         motion_data = self.motion_loader.get_motion_data(
             motion_ids, motion_times, joint_names=joint_names
         )  # (num_env, n_step, dim)
-        ref_root_pos_w = motion_data["root_pos_w"] + env.scene.env_origins[env_ids]
+        ref_root_pos_w = motion_data["root_pos_w"].clone()
+        ref_root_pos_w += self._sample_spawn_positions(env, env_ids)
         ref_root_pos_w[..., 2] += 0.05  # avoid penetration
         ref_root_quat_w = motion_data["root_quat_w"]
         ref_root_lin_vel_w = motion_data["root_lin_vel_w"]
@@ -57,3 +58,25 @@ class reset_from_motion_data:
             torch.cat([ref_root_lin_vel_w, ref_root_ang_vel_w], dim=-1), env_ids=env_ids
         )
         asset.write_joint_position_to_sim(ref_joint_pos, env_ids=env_ids)
+
+    @staticmethod
+    def _sample_spawn_positions(env: ManagerBasedRlEnv, env_ids: torch.Tensor) -> torch.Tensor:
+        """Sample collision-free spawn positions for the given envs.
+
+        On rough terrain, ``env_origins`` does not reflect the local ground height
+        (stairs/slopes/gaps), so spawning directly above the origin can penetrate
+        the terrain and make the simulation diverge. Instead, place the robot on a
+        randomly chosen flat spawn patch of its terrain tile (world coordinates),
+        falling back to ``env_origins`` for flat or patch-less terrains.
+        """
+        terrain = env.scene.terrain
+        if terrain is not None and "spawn" in terrain.flat_patches:
+            patches = terrain.flat_patches["spawn"]  # (num_rows, num_cols, num_patches, 3)
+            levels = terrain.terrain_levels[env_ids]
+            types = terrain.terrain_types[env_ids]
+            patch_ids = torch.randint(0, patches.shape[2], (len(env_ids),), device=env.device)
+            positions = patches[levels, types, patch_ids]
+            # Patch xy is the horizontal base (motion xy drift is added by the caller)
+            # and patch z is the true ground height.
+            return positions
+        return env.scene.env_origins[env_ids]

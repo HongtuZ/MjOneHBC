@@ -1,7 +1,9 @@
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 import joblib
+import numpy as np
 import torch
 from mjlab.utils.lab_api import math as math_utils
 
@@ -9,7 +11,7 @@ from mjlab.utils.lab_api import math as math_utils
 @dataclass
 class Motion:
     num_frames: int
-    motion_ids: torch.Tensor # (num_frames,)
+    motion_ids: torch.Tensor  # (num_frames,)
     root_pos_w: torch.Tensor  # (num_frames, 3)
     root_quat_w: torch.Tensor  # (num_frames, 4) wxyz
     root_lin_vel_w: torch.Tensor  # (num_frames, 3)
@@ -34,6 +36,7 @@ class MotionLoader:
         motion_data_dir: str | None = None,
         motion_data_weights: dict[str, float] | None = None,
         device: str = "cpu",
+        robot_model_path: str | None = None,
     ):
         self.motion_data_dir = motion_data_dir
         self.motion_data_weights = motion_data_weights
@@ -42,6 +45,8 @@ class MotionLoader:
         self.body_names = None
         self.body_name2idx = {}
         self.device = device
+        self.robot_model_path = robot_model_path
+        self._fk_model_cache: dict[str, tuple] = {}
         if self.motion_data_dir is not None:
             self._load_motion_data()
 
@@ -49,10 +54,13 @@ class MotionLoader:
         motion_data_dir = Path(self.motion_data_dir)
         if not motion_data_dir.exists():
             raise ValueError(f"Motion data directory {str(motion_data_dir)} does not exist.")
-        motion_files = list(motion_data_dir.rglob("*.pkl"))
+        # CSV files take precedence over PKL files when they share the same stem.
+        motion_files = list(motion_data_dir.rglob("*.pkl")) + list(motion_data_dir.rglob("*.csv"))
         if len(motion_files) == 0:
-            raise ValueError(f"No motion data files with .pkl extension found in {str(motion_data_dir)}")
-        motion_name2path = {p.stem: p for p in motion_files}
+            raise ValueError(f"No motion data files with .pkl/.csv extension found in {str(motion_data_dir)}")
+        motion_name2path = {}
+        for p in motion_files:
+            motion_name2path[p.stem] = p
 
         if self.motion_data_weights is None:
             print("⚠️ Did not specify the motion data weights, load all with weight 1.0!")
@@ -91,9 +99,10 @@ class MotionLoader:
             # load the motion data file
             motion_path = motion_name2path[motion_name]
             print(f"[Motion Data Manager] Loading motion data from {str(motion_path)}...")
-            motion_raw_data = joblib.load(str(motion_path))
-            if not isinstance(motion_raw_data, dict):
-                raise ValueError(f"Motion data file {str(motion_path)} does not contain a valid dictionary.")
+            if motion_path.suffix == ".csv":
+                motion_raw_data = self._load_motion_csv(motion_path)
+            else:
+                motion_raw_data = self._load_motion_pkl(motion_path)
 
             num_frames = len(motion_raw_data["root_pos_w"])
             if num_frames < 2:
@@ -206,6 +215,165 @@ class MotionLoader:
         lengths_shifted[0] = 0
         self.motion_start_indices = torch.cumsum(lengths_shifted, dim=0)
         print(f"✅ Load motion data successfully on device {self.device}!")
+
+    def _load_motion_pkl(self, motion_path: Path) -> dict:
+        motion_raw_data = joblib.load(str(motion_path))
+        if not isinstance(motion_raw_data, dict):
+            raise ValueError(f"Motion data file {str(motion_path)} does not contain a valid dictionary.")
+        return motion_raw_data
+
+    def _load_motion_csv(self, motion_path: Path) -> dict:
+        """Load motion data from a CSV file.
+
+        The CSV file starts with metadata comment lines (e.g. `# sample_rate: 50.0`, `# robot: ths_23dof`),
+        followed by a header line: time, root_x/y/z, root_qx/qy/qz/qw and one `dof_<joint_name>` column
+        per actuated joint. Body-level data (body_pos_b/body_quat_b) is recovered via MuJoCo forward kinematics.
+        """
+        metadata: dict[str, str] = {}
+        header_line = None
+        data_lines: list[str] = []
+        with open(motion_path) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                if line.startswith("#"):
+                    match = re.match(r"#\s*([\w]+)\s*:\s*(.+)", line)
+                    if match:
+                        metadata[match.group(1)] = match.group(2).strip()
+                elif header_line is None:
+                    header_line = line
+                else:
+                    data_lines.append(line)
+        if header_line is None:
+            raise ValueError(f"Motion data CSV file {str(motion_path)} does not contain a header line.")
+        if len(data_lines) == 0:
+            raise ValueError(f"Motion data CSV file {str(motion_path)} does not contain any data rows.")
+
+        columns = [c.strip() for c in header_line.split(",")]
+        data = np.loadtxt(data_lines, delimiter=",", dtype=np.float64)
+        if data.ndim == 1:
+            data = data.reshape(1, -1)
+        if data.shape[1] != len(columns):
+            raise ValueError(
+                f"Motion data CSV file {str(motion_path)} has {data.shape[1]} data columns but {len(columns)} header entries."
+            )
+        col2idx = {name: i for i, name in enumerate(columns)}
+
+        # Root pose (convert quaternion xyzw -> wxyz)
+        root_pos_w = data[:, [col2idx[c] for c in ("root_x", "root_y", "root_z")]]
+        root_quat_xyzw = data[:, [col2idx[c] for c in ("root_qx", "root_qy", "root_qz", "root_qw")]]
+        root_quat_w = np.concatenate([root_quat_xyzw[:, 3:4], root_quat_xyzw[:, 0:3]], axis=-1)
+
+        # Joint positions (columns named `dof_<joint_name>`)
+        joint_names = [c[len("dof_") :] for c in columns if c.startswith("dof_")]
+        if len(joint_names) == 0:
+            raise ValueError(f"Motion data CSV file {str(motion_path)} does not contain any `dof_*` joint columns.")
+        joint_pos = data[:, [col2idx[f"dof_{name}"] for name in joint_names]]
+
+        # Fps from metadata or time column
+        if "sample_rate" in metadata:
+            fps = float(metadata["sample_rate"])
+        elif "time" in col2idx and data.shape[0] > 1:
+            fps = float(1.0 / np.mean(np.diff(data[:, col2idx["time"]])))
+        else:
+            raise ValueError(f"Cannot determine fps of motion data CSV file {str(motion_path)}.")
+
+        # Body-level data via MuJoCo forward kinematics
+        robot_model_path = self._resolve_robot_model_path(metadata.get("robot"))
+        body_names, body_pos_b, body_quat_b = self._compute_body_fk(
+            robot_model_path, root_pos_w, root_quat_w, joint_names, joint_pos
+        )
+
+        return {
+            "fps": fps,
+            "root_pos_w": root_pos_w,
+            "root_quat_w": root_quat_w,
+            "joint_pos": joint_pos,
+            "joint_names": joint_names,
+            "body_pos_b": body_pos_b,
+            "body_quat_b": body_quat_b,
+            "body_names": body_names,
+        }
+
+    def _resolve_robot_model_path(self, robot_name: str | None) -> Path:
+        if self.robot_model_path is not None:
+            robot_model_path = Path(self.robot_model_path)
+        elif robot_name is not None:
+            from OneHBC import ONEHBC_ROOT
+
+            robot_model_path = ONEHBC_ROOT / "robot_assets" / robot_name / "urdf" / f"{robot_name}.xml"
+        else:
+            raise ValueError(
+                "Cannot determine the robot model for CSV motion data: please specify `robot_model_path` "
+                "or include a `# robot: <robot_name>` metadata line in the CSV file."
+            )
+        if not robot_model_path.exists():
+            raise ValueError(f"Robot model file {str(robot_model_path)} does not exist.")
+        return robot_model_path
+
+    def _get_fk_model(self, robot_model_path: Path):
+        """Load (and cache) the MuJoCo model used for forward kinematics."""
+        cache_key = str(robot_model_path)
+        if cache_key not in self._fk_model_cache:
+            import mujoco
+
+            model = mujoco.MjModel.from_xml_path(str(robot_model_path))
+            model_body_names = [model.body(i).name for i in range(1, model.nbody)]  # skip "world"
+            model_joint_addr = {model.joint(i).name: int(model.jnt_qposadr[i]) for i in range(model.njnt)}
+            self._fk_model_cache[cache_key] = (model, model_body_names, model_joint_addr)
+        return self._fk_model_cache[cache_key]
+
+    def _compute_body_fk(
+        self,
+        robot_model_path: Path,
+        root_pos_w: np.ndarray,
+        root_quat_w: np.ndarray,
+        joint_names: list[str],
+        joint_pos: np.ndarray,
+    ) -> tuple[list[str], np.ndarray, np.ndarray]:
+        """Compute body poses in the root frame via MuJoCo forward kinematics."""
+        import mujoco
+
+        model, model_body_names, model_joint_addr = self._get_fk_model(robot_model_path)
+        data = mujoco.MjData(model)
+        num_frames = root_pos_w.shape[0]
+
+        qpos_idx = []
+        for name in joint_names:
+            if name not in model_joint_addr:
+                raise ValueError(f"Joint {name} in CSV motion data not found in robot model {str(robot_model_path)}.")
+            qpos_idx.append(model_joint_addr[name])
+
+        body_pos_w = np.zeros((num_frames, model.nbody - 1, 3), dtype=np.float32)
+        body_quat_w = np.zeros((num_frames, model.nbody - 1, 4), dtype=np.float32)
+        for i in range(num_frames):
+            data.qpos[:] = 0.0
+            data.qpos[0:3] = root_pos_w[i]
+            data.qpos[3:7] = root_quat_w[i]  # wxyz
+            data.qpos[qpos_idx] = joint_pos[i]
+            mujoco.mj_kinematics(model, data)
+            body_pos_w[i] = data.xpos[1:]
+            body_quat_w[i] = data.xquat[1:]
+
+        # Transform body poses from world frame to root (base) frame
+        root_pos_w_t = torch.from_numpy(root_pos_w).float().to(self.device)
+        root_quat_w_t = torch.from_numpy(root_quat_w).float().to(self.device)
+        body_pos_w_t = torch.from_numpy(body_pos_w).to(self.device)
+        body_quat_w_t = torch.from_numpy(body_quat_w).to(self.device)
+        body_pos_b = math_utils.quat_apply_inverse(
+            root_quat_w_t.unsqueeze(1).expand(-1, body_pos_w_t.shape[1], -1),
+            body_pos_w_t - root_pos_w_t.unsqueeze(1),
+        )
+        body_quat_b = math_utils.quat_mul(
+            math_utils.quat_conjugate(root_quat_w_t.unsqueeze(1).expand(-1, body_quat_w_t.shape[1], -1)),
+            body_quat_w_t,
+        )
+        return (
+            model_body_names,
+            body_pos_b.detach().cpu().numpy(),
+            body_quat_b.detach().cpu().numpy(),
+        )
 
     def sample_motion_ids(self, n: int) -> torch.Tensor:
         return torch.multinomial(self.motion_weights, num_samples=n, replacement=True)
@@ -422,9 +590,7 @@ class MotionLoader:
             body_ang_vel_b=motion_data["body_ang_vel_b"],
         )
 
-    def get_all_motions(
-        self, dt: float, joint_names: list | None = None, body_names: list | None = None
-    ) -> Motion:
+    def get_all_motions(self, dt: float, joint_names: list | None = None, body_names: list | None = None) -> Motion:
         all_motion_ids = []
         all_times = []
         for motion_id in range(len(self.motion_durations)):
@@ -508,8 +674,11 @@ if __name__ == "__main__":
     # Test
     device = "cuda:0"
     # device = 'cpu'
+    from OneHBC import ONEHBC_ROOT
+
     motion_loader = MotionLoader(
-        motion_data_dir="/home/robot/hongtu/SimpleAMP/robot_assets/ths_23dof/motion_data",
+        motion_data_dir=str(ONEHBC_ROOT / "robot_assets/ths_23dof/motion_data"),
+        motion_data_weights={"dance1_subject2": 1.0},  # load the CSV motion file
         device=device,
     )
     for _ in range(3):
@@ -518,10 +687,10 @@ if __name__ == "__main__":
         motion_seq_data = motion_loader.get_motion_seq_data(motion_ids, motion_seq_times)
         amp_input = torch.cat(
             [
-                motion_seq_data["root_lin_vel_b"],
-                motion_seq_data["root_ang_vel_b"],
-                motion_seq_data["joint_pos"],
-                motion_seq_data["joint_vel"],
+                motion_seq_data.root_lin_vel_b,
+                motion_seq_data.root_ang_vel_b,
+                motion_seq_data.joint_pos,
+                motion_seq_data.joint_vel,
             ],
             dim=-1,
         ).to("cuda:0")  # (num_envs, n_steps, d)

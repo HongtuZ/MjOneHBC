@@ -1,6 +1,8 @@
 import atexit
 import multiprocessing as mp
+import os
 import struct
+import threading
 import time
 from multiprocessing import shared_memory
 
@@ -28,57 +30,152 @@ def uint16_to_float(u, u_min, u_max):
     return float((u - 32767) / 65535) * (u_max - u_min)
 
 
-def float_to_P4hex(x):
-    """float 转 4 字节（小端）"""
-    return struct.pack("<f", x)
+# 说明书故障码 0x3022（faultSta）/ 故障反馈帧（通信类型21）各比特含义
+FAULT_BIT_NAMES = {
+    0: "电机过温",
+    1: "驱动芯片故障",
+    2: "欠压",
+    3: "过压",
+    7: "编码器未标定",
+    14: "堵转i²t过载",
+}
+
+# 反馈帧（通信类型2）/ 使能应答帧 ID 中 bit21~16 故障位含义（与 0x3022 布局不同！）
+FB_FAULT_BIT_NAMES = {
+    0: "欠压故障",  # bit16
+    1: "过流/驱动故障",  # bit17
+    2: "过温",  # bit18
+    3: "磁编码故障",  # bit19
+    4: "堵转过载故障",  # bit20
+    5: "编码器未标定",  # bit21
+}
 
 
-def P4hex_to_float(x):
-    """4 字节 hex 转 float（大端）"""
-    return struct.unpack("f", x.to_bytes(4, "big"))[0]
+def decode_fault_bits(fault: int) -> list[str]:
+    """把 0x3022 / 故障反馈帧的故障位图解析成故障描述列表"""
+    return [name for bit, name in FAULT_BIT_NAMES.items() if fault & (1 << bit)]
 
 
-def slow_can_io(bus, motor_id, arbitration_id, data):
+def decode_fb_fault_bits(fault: int) -> list[str]:
+    """把反馈帧 ID bit21~16 的故障位图解析成故障描述列表"""
+    return [name for bit, name in FB_FAULT_BIT_NAMES.items() if fault & (1 << bit)]
+
+
+def slow_can_io(bus, motor_id, arbitration_id, data, expect_func=None):
     """
     发送后阻塞等待回复，最多尝试 2 次
+    expect_func: 期望的应答帧功能码，收到不匹配的帧（如残留的运控反馈帧）直接丢弃继续等待
+    返回 (state, rx_data, rx_arbitration_id)
     """
     for _ in range(2):
         bus.send(can.Message(arbitration_id=arbitration_id, data=data, is_extended_id=True))
-        rx = bus.recv(timeout=0.01)
-        if rx is not None:
+        deadline = time.perf_counter() + 0.01
+        while time.perf_counter() < deadline:
+            rx = bus.recv(timeout=max(0.0, deadline - time.perf_counter()))
+            if rx is None:
+                break
             rx_id = (rx.arbitration_id >> 8) & 0xFF
             rx_func = rx.arbitration_id >> 24
-            if rx_id != 0 and rx_func != 0 and rx_id == motor_id:
-                return 0, list(rx.data)
-    return 1, [0] * 8
+            if rx_id != motor_id or rx_func == 0:
+                continue
+            if expect_func is not None and rx_func != expect_func:
+                continue  # 丢弃功能码不匹配的帧，避免把残留反馈帧当成应答
+            return 0, list(rx.data), rx.arbitration_id
+    return 1, [0] * 8, 0
 
 
 def set_motion_mode(bus, motor_id):
-    """功能码 0x12，主 ID 0xfd"""
+    """功能码 0x12，主 ID 0xfd，应答为反馈帧（0x02）"""
     arb = 0x1200FD00 | motor_id
-    state, _ = slow_can_io(bus, motor_id, arb, [0] * 8)
+    state, _, _ = slow_can_io(bus, motor_id, arb, [0] * 8, expect_func=0x02)
+    time.sleep(0.0005)
+    return state
+
+
+def set_motion_stop(bus, motor_id, clear_fault=False):
+    """通信类型4（0x04）电机停止运行，Byte0=1 时同时清除故障，应答为反馈帧（0x02）"""
+    arb = 0x0400FD00 | motor_id
+    data = [0x01, 0, 0, 0, 0, 0, 0, 0] if clear_fault else [0] * 8
+    state, _, _ = slow_can_io(bus, motor_id, arb, data, expect_func=0x02)
     time.sleep(0.0005)
     return state
 
 
 def set_motion_enable(bus, motor_id):
-    """功能码 0x03，主 ID 0xfd"""
+    """
+    通信类型3（0x03）电机使能运行
+    应答为反馈帧（通信类型2），校验 bit22~23 模式状态 == 2（Motor 模式[运行]），
+    同时检查 bit21~16 故障位。返回 (state, mode, fault_bits)
+    """
     arb = 0x0300FD00 | motor_id
-    state, _ = slow_can_io(bus, motor_id, arb, [0] * 8)
+    state, _, rx_arb = slow_can_io(bus, motor_id, arb, [0] * 8, expect_func=0x02)
     time.sleep(0.0005)
-    return state
+    if state != 0:
+        return 1, -1, 0
+    mode = (rx_arb >> 22) & 0x3
+    fault_bits = (rx_arb >> 16) & 0x3F
+    return 0, mode, fault_bits
+
+
+def ensure_motor_enabled(bus, cfg, max_retry=5):
+    """
+    确保电机使能（全程不发送任何运控指令帧 0x01，只发状态帧）：
+    1. 直接发送使能帧（通信类型3）判断状态：该帧不含位置/速度/力矩指令，
+       对已使能的电机是幂等操作，不会引起任何动作；
+       应答反馈帧模式状态 == 2 即表示已处于使能运行状态
+    2. 若未使能（故障/复位状态），再执行 停止(清故障) -> 清运控模式 -> 使能
+       序列重试，最多 max_retry 次
+    返回 (success, detail)
+    """
+
+    def _describe(state, mode, fault_bits):
+        if state != 0:
+            return "使能帧无应答（通信异常）"
+        if fault_bits:
+            return "反馈故障位: " + "、".join(decode_fb_fault_bits(fault_bits))
+        return f"使能后模式状态为 {mode}（0=复位/1=标定/2=运行），未进入运行状态"
+
+    # 发送使能帧前清空队列残留帧（已使能电机的判断不会发任何运控指令）
+    while bus.recv(timeout=0.005) is not None:
+        pass
+
+    state, mode, fault_bits = set_motion_enable(bus, cfg.motor_id)
+    if state == 0 and mode == 2 and not fault_bits:
+        return True, "已使能（含本次使能成功）"
+
+    # 未使能：停止(清故障) -> 清运控模式 -> 使能，重试 max_retry 次
+    last_detail = _describe(state, mode, fault_bits)
+    for _ in range(max_retry):
+        while bus.recv(timeout=0.005) is not None:
+            pass
+        set_motion_stop(bus, cfg.motor_id, clear_fault=True)  # 切模式须在失能状态，同时清除残留故障
+        set_motion_mode(bus, cfg.motor_id)
+        state, mode, fault_bits = set_motion_enable(bus, cfg.motor_id)
+        if state == 0 and mode == 2 and not fault_bits:
+            return True, "使能成功"
+        last_detail = _describe(state, mode, fault_bits)
+        time.sleep(0.02)  # 重试前稍作等待
+    return False, last_detail
+
+
+def read_motor_raw(bus, motor_id, address):
+    """功能码 0x11，主 ID 0xfd，返回原始 Byte4~7（低字节在前）"""
+    arb = 0x1100FD00 | motor_id
+    data = [address & 0xFF, (address >> 8) & 0xFF, 0, 0, 0, 0, 0, 0]
+    state, rx, rx_arb = slow_can_io(bus, motor_id, arb, data, expect_func=0x11)
+    if state == 0:
+        # 应答帧 Bit23~16: 00 读取成功，01 读取失败
+        if (rx_arb >> 16) & 0xFF:
+            return 1, 0
+        return 0, rx[4] | (rx[5] << 8) | (rx[6] << 16) | (rx[7] << 24)
+    return 1, 0
 
 
 def read_motor_single_data(bus, motor_id, address):
-    """功能码 0x11，主 ID 0xfd"""
-    arb = 0x1100FD00 | motor_id
-    data = [0] * 8
-    data[0] = address & 0x00FF
-    data[1] = address >> 8
-    state, rx = slow_can_io(bus, motor_id, arb, data)
+    """单个参数读取，按 float 解析（如 0x7019 = mechPos 负载端机械角度）"""
+    state, raw = read_motor_raw(bus, motor_id, address)
     if state == 0:
-        read_data = rx[4] << 24 | rx[5] << 16 | rx[6] << 8 | rx[7]
-        return 0, P4hex_to_float(read_data)
+        return 0, struct.unpack("<f", raw.to_bytes(4, "little"))[0]
     return 1, 0.0
 
 
@@ -151,6 +248,20 @@ class MotorDriver:
         for i, cfg in enumerate(motor_configs):
             bus_groups.setdefault(cfg.bus_name, []).append(i)
 
+        # ═══════ 启动子进程前预检：先使能所有电机，再检查通信读数 ═══════
+        # 注意：失败路径一律 os._exit 硬退出，避免残留的守护子进程（手柄/IMU）导致解释器无法退出
+        for bus_name, motor_indices in bus_groups.items():
+            configs = [motor_configs[i] for i in motor_indices]
+            try:
+                if not self._precheck_bus(bus_name, configs):
+                    os._exit(1)
+            except RuntimeError as e:
+                print(e)
+                os._exit(1)
+            except OSError as e:
+                print(f"错误: CAN 接口 {bus_name} 打开失败: {e}")
+                os._exit(1)
+
         # 共享内存
         total_bytes = self.NUM_ROWS * self.num_motors * np.dtype(self.DTYPE).itemsize
         self.shared_mem = shared_memory.SharedMemory(create=True, size=total_bytes)
@@ -159,19 +270,141 @@ class MotorDriver:
 
         # 启动各 CAN 进程
         self.running = mp.Value("b", True)
+        self.fatal_comm = mp.Value("b", False)
+        self.fatal_msg = mp.Array("c", 512)
+        self.ready_count = mp.Value("i", 0)  # 已完成默认姿态过渡的 bus 数
         self.processes = []
 
         for bus_name, motor_indices in bus_groups.items():
             configs = [motor_configs[i] for i in motor_indices]
             proc = mp.Process(
                 target=self._can_worker,
-                args=(bus_name, motor_indices, configs, self.shared_mem.name, self.state.shape, self.running),
+                args=(
+                    bus_name,
+                    motor_indices,
+                    configs,
+                    self.shared_mem.name,
+                    self.state.shape,
+                    self.running,
+                    self.fatal_comm,
+                    self.fatal_msg,
+                    self.ready_count,
+                ),
             )
             proc.start()
             self.processes.append(proc)
 
+        # 通信异常监控：子进程上报后立即停止程序
+        threading.Thread(target=self._fatal_monitor, daemon=True).start()
+
         atexit.register(self.close)
-        time.sleep(0.3)  # 等待子进程完成初始化
+
+        # 等待所有 bus 完成默认姿态过渡（致命异常时由监控线程终止程序）
+        deadline = time.perf_counter() + 10.0
+        while self.ready_count.value < len(self.processes):
+            if self.fatal_comm.value:
+                self._abort()  # 子进程已上报致命异常，立即退出
+            if time.perf_counter() > deadline:
+                print("错误: 等待电机进入默认姿态超时，程序退出")
+                self._abort()
+            time.sleep(0.05)
+        print(f"所有 {self.num_motors} 个电机就绪，已进入默认姿态")
+
+    # ── 启动预检 ──
+
+    @staticmethod
+    def _precheck_bus(bus_name, configs):
+        """
+        主进程内对一路 CAN 做启动预检（全程只发使能/停止/模式状态帧与读取帧，
+        不发送任何运控指令帧 0x01，第一条运控指令由子进程过渡到默认姿态时下发）：
+        1. 逐个检查并使能电机（已使能的直接跳过），失败则报出具体电机并终止
+        2. 逐个读取角度与故障状态，检查通信是否正常
+        3. 读取所有电机当前位置，打印与默认姿态的角度差异
+        返回 True 表示预检通过
+        """
+        bus = can.interface.Bus(channel=bus_name, interface="socketcan", bitrate=1000000)
+        # 清空总线上残留帧
+        while bus.recv(timeout=0.01) is not None:
+            pass
+
+        # ── 1. 检查并使能所有电机（已使能的跳过，最多尝试 5 次）──
+        enable_failures = []
+        for cfg in configs:
+            ok, detail = ensure_motor_enabled(bus, cfg, max_retry=5)
+            if ok:
+                print(f"[{bus_name}] 电机 {cfg.joint_name} (id=0x{cfg.motor_id:02X}) {detail}")
+            else:
+                enable_failures.append(f"{cfg.joint_name} (id=0x{cfg.motor_id:02X}): {detail}")
+        if enable_failures:
+            bus.shutdown()
+            raise RuntimeError("电机使能失败，程序退出:\n  " + "\n  ".join(enable_failures))
+
+        # ── 2. 检查所有电机通信读数（仅读取，不下发任何指令）──
+        comm_failures = []
+        positions = {}
+        for cfg in configs:
+            err, pos = read_motor_single_data(bus, cfg.motor_id, 0x7019)  # mechPos
+            if err != 0:
+                comm_failures.append(f"{cfg.joint_name} (id=0x{cfg.motor_id:02X}): 角度读取无应答")
+                continue
+            if not np.isfinite(pos) or abs(pos) > 1.8:
+                comm_failures.append(f"{cfg.joint_name} (id=0x{cfg.motor_id:02X}): 角度读数异常 {pos:.4f} rad")
+            positions[cfg.joint_name] = pos
+            err, raw = read_motor_raw(bus, cfg.motor_id, 0x3022)  # faultSta
+            if err == 0 and raw != 0:
+                faults = decode_fault_bits(raw)
+                comm_failures.append(
+                    f"{cfg.joint_name} (id=0x{cfg.motor_id:02X}): 故障状态 0x{raw:08X}"
+                    + (f"（{'、'.join(faults)}）" if faults else "")
+                )
+        if comm_failures:
+            bus.shutdown()
+            print("电机通信检查异常，以下关节读数有问题，程序退出:")
+            for item in comm_failures:
+                print(f"  {item}")
+            return False
+        print(f"[{bus_name}] 通信检查通过，{len(configs)} 个电机读数正常")
+
+        # ── 3. 打印当前位置与默认姿态的角度差异（仅读取，不下发任何指令）──
+        print(f"[{bus_name}] 当前角度与默认姿态差异:")
+        for cfg in configs:
+            pos = positions[cfg.joint_name]
+            diff = pos - cfg.default_pos
+            print(
+                f"  {cfg.joint_name:<24} 当前 {pos:+.4f} rad | 默认 {cfg.default_pos:+.4f} rad | 差异 {diff:+.4f} rad"
+            )
+
+        bus.shutdown()
+        return True
+
+    def _fatal_monitor(self):
+        """监控致命通信异常与子进程存活，一旦触发立即停止程序"""
+        while True:
+            if self.fatal_comm.value:
+                msg = self.fatal_msg.value.decode(errors="ignore")
+                print(f"\n通信异常，程序立即停止: {msg}")
+                atexit.unregister(self.close)
+                os._exit(1)
+            if not self.running.value:
+                break
+            # 子进程意外退出（未上报致命异常）也要立即停止程序
+            for p in self.processes:
+                if p.exitcode is not None and p.exitcode != 0:
+                    print(f"\n通信子进程异常退出 (exitcode={p.exitcode})，程序立即停止")
+                    atexit.unregister(self.close)
+                    os._exit(1)
+            time.sleep(0.05)
+
+    def _abort(self):
+        """异常终止：停掉所有子进程并释放资源后退出"""
+        self.running.value = False
+        for p in self.processes:
+            p.terminate()
+            p.join(timeout=1.0)
+        self.shared_mem.close()
+        self.shared_mem.unlink()
+        atexit.unregister(self.close)
+        os._exit(1)
 
     # ── 读取接口（按外部 joint_order 排序）──
 
@@ -246,26 +479,43 @@ class MotorDriver:
     # ═══════════════════════════════════════════════════
 
     @staticmethod
-    def _can_worker(bus_name, motor_indices, motor_configs, shm_name, state_shape, running):
+    def _can_worker(
+        bus_name, motor_indices, motor_configs, shm_name, state_shape, running, fatal_comm, fatal_msg, ready_count
+    ):
+        def fatal_stop(reason):
+            """通信致命异常：上报主进程并立即退出本子进程"""
+            print(f"[{bus_name}] 通信异常: {reason}")
+            fatal_msg.value = reason.encode()[:511]
+            fatal_comm.value = True
+            running.value = False
+
         # 连接共享内存
         shm = shared_memory.SharedMemory(name=shm_name)
         state = np.ndarray(state_shape, dtype=MotorDriver.DTYPE, buffer=shm.buf)
 
         n_local = len(motor_indices)
         motor_ids = [cfg.motor_id for cfg in motor_configs]
+        id_to_local = {mid: i for i, mid in enumerate(motor_ids)}
+        id_to_name = {cfg.motor_id: cfg.joint_name for cfg in motor_configs}
 
-        # 创建 CAN 总线
-        bus = can.interface.Bus(channel=bus_name, interface="socketcan", bitrate=1000000)
+        # 创建 CAN 总线（使能/通信预检已在主进程完成）
+        try:
+            bus = can.interface.Bus(channel=bus_name, interface="socketcan", bitrate=1000000)
+        except OSError as e:
+            fatal_stop(f"CAN 接口 {bus_name} 打开失败: {e}")
+            shm.close()
+            return
 
-        # ═══════ 初始化：设模式 + 使能 + 读当前角度 ═══════
+        # 清空残留帧
+        while bus.recv(timeout=0.01) is not None:
+            pass
+
+        # ═══════ 初始化：读当前角度 ═══════
         init_pos = np.zeros(n_local, dtype=np.float64)
         default_pos = np.array([cfg.default_pos for cfg in motor_configs], dtype=np.float64)
 
         for local_idx, cfg in enumerate(motor_configs):
             mid = cfg.motor_id
-            if set_motion_mode(bus, mid) != 0 or set_motion_enable(bus, mid) != 0:
-                print(f"[{bus_name}] 电机 {cfg.joint_name} 初始化失败")
-                continue
             err, pos = read_motor_single_data(bus, mid, 0x7019)
             if err == 0 and abs(pos) < 1.8:
                 init_pos[local_idx] = pos
@@ -309,6 +559,32 @@ class MotorDriver:
                     print(f"Error send_one() to {cfg.joint_name}: {e}")
         print(f"[{bus_name}] 过渡完成，已进入 default_pos")
 
+        # 按电机粒度的心跳计时（0.0 表示从未收到过反馈）
+        FEEDBACK_TIMEOUT_S = 1.0
+        last_feedback = np.zeros(n_local, dtype=np.float64)
+
+        # 过渡阶段结束后确认所有电机都有反馈，否则视为通信异常
+        deadline = time.perf_counter() + FEEDBACK_TIMEOUT_S
+        while time.perf_counter() < deadline:
+            msg = bus.recv(timeout=0.05)
+            if msg is None:
+                if np.all(last_feedback > 0.0):
+                    break
+                continue
+            if msg.arbitration_id >> 24 != 0x02:
+                continue
+            rx_mid = (msg.arbitration_id >> 8) & 0xFF
+            if rx_mid in id_to_local:
+                last_feedback[id_to_local[rx_mid]] = time.perf_counter()
+            if np.all(last_feedback > 0.0):
+                break
+        silent = [id_to_name[motor_ids[i]] for i in range(n_local) if last_feedback[i] <= 0.0]
+        if silent:
+            fatal_stop(f"以下关节无反馈: {', '.join(silent)}")
+            bus.shutdown()
+            shm.close()
+            return
+
         # 把最终状态写入共享内存
         state[MotorDriver.ROW_QPOS, motor_indices] = default_pos.astype(MotorDriver.DTYPE)
         state[MotorDriver.ROW_CTRL_POS, motor_indices] = default_pos.astype(MotorDriver.DTYPE)
@@ -318,35 +594,57 @@ class MotorDriver:
             state[MotorDriver.ROW_CTRL_KP, motor_indices[local_idx]] = cfg.default_kp
             state[MotorDriver.ROW_CTRL_KD, motor_indices[local_idx]] = cfg.default_kd
 
-        # ═══════ 高速运行阶段 ═══════
-        id_to_local = {mid: i for i, mid in enumerate(motor_ids)}
+        # 本 bus 已就绪（默认姿态过渡完成）
+        with ready_count.get_lock():
+            ready_count.value += 1
 
+        # ═══════ 高速运行阶段 ═══════
         local_qpos = default_pos.copy()
         local_qvel = np.zeros(n_local, dtype=np.float64)
         local_tau = np.zeros(n_local, dtype=np.float64)
 
-        # 心跳计时
-        alive_check_time_start = time.perf_counter()
-        no_response_max_s = 1.0
         while running.value:
             # ── 接收阶段 ──
-            received = False
             while True:
                 msg = bus.recv(timeout=0)
                 if msg is None:
                     break
 
-                # 过滤：功能码必须为 0x02（运控反馈帧）
-                if msg.arbitration_id >> 24 != 0x02:
-                    continue
-
+                rx_func = msg.arbitration_id >> 24
                 rx_motor_id = (msg.arbitration_id >> 8) & 0xFF
                 if rx_motor_id not in id_to_local:
+                    continue
+
+                # 故障反馈帧（通信类型21）
+                if rx_func == 0x15:
+                    fault = msg.data[0] | (msg.data[1] << 8) | (msg.data[2] << 16) | (msg.data[3] << 24)
+                    if fault:
+                        name = id_to_name.get(rx_motor_id, f"id=0x{rx_motor_id:02X}")
+                        faults = decode_fault_bits(fault)
+                        detail = "、".join(faults) if faults else f"0x{fault:08X}"
+                        fatal_stop(f"关节 {name} 上报故障: {detail}")
+                        bus.shutdown()
+                        shm.close()
+                        return
+                    continue
+
+                # 过滤：功能码必须为 0x02（运控反馈帧）
+                if rx_func != 0x02:
                     continue
 
                 local_idx = id_to_local[rx_motor_id]
                 cfg = motor_configs[local_idx]
                 data = msg.data
+
+                # 反馈帧 ID 中的故障位（bit21~16，0 无 1 有）
+                fb_fault = (msg.arbitration_id >> 16) & 0x3F
+                if fb_fault:
+                    faults = decode_fb_fault_bits(fb_fault)
+                    detail = "、".join(faults) if faults else f"0x{fb_fault:02X}"
+                    fatal_stop(f"关节 {cfg.joint_name} 反馈帧带故障位: {detail}")
+                    bus.shutdown()
+                    shm.close()
+                    return
 
                 # 解析反馈（忠实复刻原始代码）
                 pos_raw = (data[0] << 8) | data[1]
@@ -366,15 +664,16 @@ class MotorDriver:
                 if not (cfg.joint_pmin <= local_qpos[local_idx] <= cfg.joint_pmax):
                     print(f"[{bus_name}] 电机 {cfg.joint_name} 角度超限: {local_qpos[local_idx]:.4f}")
 
-                received = True
-                alive_check_time_start = time.perf_counter()
-                no_response_max_s = 1.0
+                last_feedback[local_idx] = time.perf_counter()
 
-            if not received:
-                no_response_duration = time.perf_counter() - alive_check_time_start
-                if no_response_duration > no_response_max_s:
-                    print(f"[{bus_name}] 通信异常：超过1s未收到反馈")
-                    no_response_max_s += 1.0
+            # ── 按电机粒度检查反馈超时 ──
+            now = time.perf_counter()
+            silent = [id_to_name[motor_ids[i]] for i in range(n_local) if now - last_feedback[i] > FEEDBACK_TIMEOUT_S]
+            if silent:
+                fatal_stop(f"以下关节通信超时（超过 {FEEDBACK_TIMEOUT_S:.0f}s 未收到反馈）: {', '.join(silent)}")
+                bus.shutdown()
+                shm.close()
+                return
 
             # ── 发送阶段 ──
             for local_idx, global_idx in enumerate(motor_indices):
@@ -429,6 +728,7 @@ if __name__ == "__main__":
         "right_wrist_yaw",
     ]
 
+    # 预检失败会在 MotorDriver.__init__ 内打印具体电机并硬退出
     with MotorDriver(THS_MOTORS, control_order) as driver:
         print(f"电机数量: {driver.num_joints}")
         target = np.zeros(driver.num_joints)

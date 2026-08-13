@@ -132,7 +132,7 @@ class MujocoEnv:
             self.data.ctrl[:] = np.clip(self.data.ctrl, self.model.actuator_ctrlrange[:, 0], self.model.actuator_ctrlrange[:, 1])
             mj.mj_step(self.model, self.data)
             self.viewer.sync()
-        self.viewer.cam.lookat = self.data.qpos[:3]
+            self.viewer.cam.lookat = self.data.qpos[:3]
         duration = time.perf_counter() - start_time
         time.sleep(max(0, self.dt * self.decimation - duration))
 

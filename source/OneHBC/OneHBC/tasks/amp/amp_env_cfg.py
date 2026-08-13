@@ -227,12 +227,41 @@ events = {
         },
     ),
     # Reset from motion data
-    "reset_from_motion_data": EventTermCfg(
+    # "reset_from_motion_data": EventTermCfg(
+    #     mode="reset",
+    #     func=mdp.reset_from_motion_data,
+    #     params={
+    #         "motion_data_dir": None,  # set per robot
+    #         "asset_cfg": SceneEntityCfg("robot", joint_names=(".*_joint")),
+    #     },
+    # ),
+    "reset_base": EventTermCfg(
+        func=mdp.reset_root_state_uniform,
         mode="reset",
-        func=mdp.reset_from_motion_data,
         params={
-            "motion_data_dir": None,  # set per robot
-            "asset_cfg": SceneEntityCfg("robot", joint_names=(".*_joint")),
+            "pose_range": {
+                "x": (-0.5, 0.5),
+                "y": (-0.5, 0.5),
+                "z": (0.01, 0.05),
+                "yaw": (-3.14, 3.14),
+            },
+            "velocity_range": {
+                "x": (-0.2, 0.2),
+                "y": (-0.2, 0.2),
+                "z": (-0.2, 0.2),
+                "roll": (-0.2, 0.2),
+                "pitch": (-0.2, 0.2),
+                "yaw": (-0.2, 0.2),
+            },
+        },
+    ),
+    "reset_robot_joints": EventTermCfg(
+        func=mdp.reset_joints_by_offset,
+        mode="reset",
+        params={
+            "position_range": (-0.2, 0.2),
+            "velocity_range": (-0.2, 0.2),
+            "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
         },
     ),
     # Interval randomization

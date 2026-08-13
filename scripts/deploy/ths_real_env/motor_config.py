@@ -51,7 +51,7 @@ THS_MOTORS = [
     # ─────────────── can0: 左腿 6 个 ───────────────
     MotorConfig(
         motor_id=0x01,
-        joint_name="left_hip_yaw",
+        joint_name="left_hip_pitch_joint",
         bus_name="can0",
         v_min=-20.0,
         v_max=20.0,
@@ -62,11 +62,11 @@ THS_MOTORS = [
         default_kp=P_E03,
         default_kd=D_E03,
         joint_pmin=-1.0,
-        joint_pmax=1.3,
+        joint_pmax=2.6,
     ),
     MotorConfig(
         motor_id=0x02,
-        joint_name="left_hip_roll",
+        joint_name="left_hip_roll_joint",
         bus_name="can0",
         v_min=-20.0,
         v_max=20.0,
@@ -81,7 +81,7 @@ THS_MOTORS = [
     ),
     MotorConfig(
         motor_id=0x03,
-        joint_name="left_hip_pitch",
+        joint_name="left_hip_yaw_joint",
         bus_name="can0",
         v_min=-20.0,
         v_max=20.0,
@@ -96,7 +96,7 @@ THS_MOTORS = [
     ),
     MotorConfig(
         motor_id=0x04,
-        joint_name="left_knee",
+        joint_name="left_knee_joint",
         bus_name="can0",
         v_min=-20.0,
         v_max=20.0,
@@ -106,12 +106,12 @@ THS_MOTORS = [
         kd_max=100.0,
         default_kp=P_E03,
         default_kd=D_E03,
-        joint_pmin=-1.9,
+        joint_pmin=-2.4,
         joint_pmax=0.3,
     ),
     MotorConfig(
         motor_id=0x05,
-        joint_name="left_ankle_pitch",
+        joint_name="left_ankle_pitch_joint",
         bus_name="can0",
         v_min=-44.0,
         v_max=44.0,
@@ -126,7 +126,7 @@ THS_MOTORS = [
     ),
     MotorConfig(
         motor_id=0x06,
-        joint_name="left_ankle_roll",
+        joint_name="left_ankle_roll_joint",
         bus_name="can0",
         v_min=-33.0,
         v_max=33.0,
@@ -142,7 +142,7 @@ THS_MOTORS = [
     # ─────────────── can1: 右腿 6 个 ───────────────
     MotorConfig(
         motor_id=0x0B,
-        joint_name="right_hip_yaw",
+        joint_name="right_hip_pitch_joint",
         bus_name="can1",
         v_min=-20.0,
         v_max=20.0,
@@ -152,12 +152,12 @@ THS_MOTORS = [
         kd_max=100.0,
         default_kp=P_E03,
         default_kd=D_E03,
-        joint_pmin=-1.3,
+        joint_pmin=-2.6,
         joint_pmax=1.0,
     ),
     MotorConfig(
         motor_id=0x0C,
-        joint_name="right_hip_roll",
+        joint_name="right_hip_roll_joint",
         bus_name="can1",
         v_min=-20.0,
         v_max=20.0,
@@ -172,7 +172,7 @@ THS_MOTORS = [
     ),
     MotorConfig(
         motor_id=0x0D,
-        joint_name="right_hip_pitch",
+        joint_name="right_hip_yaw_joint",
         bus_name="can1",
         v_min=-20.0,
         v_max=20.0,
@@ -187,7 +187,7 @@ THS_MOTORS = [
     ),
     MotorConfig(
         motor_id=0x0E,
-        joint_name="right_knee",
+        joint_name="right_knee_joint",
         bus_name="can1",
         v_min=-20.0,
         v_max=20.0,
@@ -198,11 +198,11 @@ THS_MOTORS = [
         default_kp=P_E03,
         default_kd=D_E03,
         joint_pmin=-0.3,
-        joint_pmax=1.9,
+        joint_pmax=2.4,
     ),
     MotorConfig(
         motor_id=0x0F,
-        joint_name="right_ankle_pitch",
+        joint_name="right_ankle_pitch_joint",
         bus_name="can1",
         v_min=-44.0,
         v_max=44.0,
@@ -217,7 +217,7 @@ THS_MOTORS = [
     ),
     MotorConfig(
         motor_id=0x10,
-        joint_name="right_ankle_roll",
+        joint_name="right_ankle_roll_joint",
         bus_name="can1",
         v_min=-33.0,
         v_max=33.0,
@@ -233,7 +233,7 @@ THS_MOTORS = [
     # ─────────────── can2: 腰 1 个 ───────────────
     MotorConfig(
         motor_id=0x15,
-        joint_name="waist_yaw",
+        joint_name="torso_joint",
         bus_name="can2",
         v_min=-50.0,
         v_max=50.0,
@@ -249,7 +249,7 @@ THS_MOTORS = [
     # ─────────────── can2: 左臂 5 个 ───────────────
     MotorConfig(
         motor_id=0x29,
-        joint_name="left_shoulder_pitch",
+        joint_name="left_shoulder_pitch_joint",
         bus_name="can2",
         v_min=-44.0,
         v_max=44.0,
@@ -264,7 +264,7 @@ THS_MOTORS = [
     ),
     MotorConfig(
         motor_id=0x2A,
-        joint_name="left_shoulder_roll",
+        joint_name="left_shoulder_roll_joint",
         bus_name="can2",
         default_pos=1.4,
         v_min=-33.0,
@@ -280,7 +280,7 @@ THS_MOTORS = [
     ),
     MotorConfig(
         motor_id=0x2B,
-        joint_name="left_shoulder_yaw",
+        joint_name="left_shoulder_yaw_joint",
         bus_name="can2",
         v_min=-33.0,
         v_max=33.0,
@@ -295,7 +295,7 @@ THS_MOTORS = [
     ),
     MotorConfig(
         motor_id=0x2C,
-        joint_name="left_elbow",
+        joint_name="left_elbow_joint",
         bus_name="can2",
         v_min=-33.0,
         v_max=33.0,
@@ -310,7 +310,7 @@ THS_MOTORS = [
     ),
     MotorConfig(
         motor_id=0x2D,
-        joint_name="left_wrist_yaw",
+        joint_name="left_wrist_roll_joint",
         bus_name="can2",
         v_min=-33.0,
         v_max=33.0,
@@ -326,7 +326,7 @@ THS_MOTORS = [
     # ─────────────── can3: 右臂 4 个 + 头 1 个 ───────────────
     MotorConfig(
         motor_id=0x33,
-        joint_name="right_shoulder_pitch",
+        joint_name="right_shoulder_pitch_joint",
         bus_name="can3",
         v_min=-44.0,
         v_max=44.0,
@@ -341,7 +341,7 @@ THS_MOTORS = [
     ),
     MotorConfig(
         motor_id=0x34,
-        joint_name="right_shoulder_roll",
+        joint_name="right_shoulder_roll_joint",
         bus_name="can3",
         default_pos=-1.4,
         v_min=-33.0,
@@ -357,7 +357,7 @@ THS_MOTORS = [
     ),
     MotorConfig(
         motor_id=0x35,
-        joint_name="right_shoulder_yaw",
+        joint_name="right_shoulder_yaw_joint",
         bus_name="can3",
         v_min=-33.0,
         v_max=33.0,
@@ -372,7 +372,7 @@ THS_MOTORS = [
     ),
     MotorConfig(
         motor_id=0x36,
-        joint_name="right_elbow",
+        joint_name="right_elbow_joint",
         bus_name="can3",
         v_min=-33.0,
         v_max=33.0,
@@ -387,7 +387,7 @@ THS_MOTORS = [
     ),
     MotorConfig(
         motor_id=0x37,
-        joint_name="right_wrist_yaw",
+        joint_name="right_wrist_roll_joint",
         bus_name="can3",
         v_min=-33.0,
         v_max=33.0,
