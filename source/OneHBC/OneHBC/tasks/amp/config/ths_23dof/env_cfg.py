@@ -1,6 +1,7 @@
 """THS23DOF velocity environment configurations."""
 
 import math
+from copy import deepcopy
 from dataclasses import dataclass
 
 from mjlab.managers.event_manager import EventTermCfg
@@ -11,7 +12,7 @@ from mjlab.sensor import (
     ContactMatch,
     ContactSensorCfg,
 )
-from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
+from mjlab.terrains import BoxFlatTerrainCfg, HfRandomUniformTerrainCfg, TerrainGeneratorCfg
 
 from OneHBC import ONEHBC_ROOT
 from OneHBC.assets.robots import THS23DOF_ACTION_SCALE, THS23DOF_CFG
@@ -65,20 +66,46 @@ self_collision_cfg = ContactSensorCfg(
     history_length=4,
 )
 
+# -----------------------------------------------------------------------------
+#                                  Terrain
+# -----------------------------------------------------------------------------
+
+half_rough_terrain_cfg = TerrainGeneratorCfg(
+    size=(5.0, 5.0),
+    border_width=20.0,
+    num_rows=40,
+    num_cols=40,
+    # curriculum=True,
+    color_scheme="none",
+    difficulty_range=(0.0, 1.0),
+    add_lights=True,
+    sub_terrains={
+        "flat": BoxFlatTerrainCfg(proportion=0.5),
+        "rough": HfRandomUniformTerrainCfg(
+            proportion=0.5,
+            noise_range=(0, 0.035),
+            noise_step=0.0025,
+            downsampled_scale=0.1,
+            border_width=0.0,
+            horizontal_scale=0.1,
+            vertical_scale=0.0025,
+        ),
+    },
+)
+
 
 @dataclass(kw_only=True)
-class AmpRoughEnvCfg(AmpEnvCfg):
+class AmpFlatEnvCfg(AmpEnvCfg):
     def __post_init__(self):
         # Simulation
-        self.sim.mujoco.ccd_iterations = 128
-        self.sim.contact_sensor_maxmatch = 512
-        self.sim.nconmax = 128
+        self.sim.njmax = 640
+        self.sim.mujoco.ccd_iterations = 50
+        self.sim.contact_sensor_maxmatch = 256
+        self.sim.nconmax = None
 
         # Scene
         self.scene.entities = {"robot": THS23DOF_CFG}
         self.scene.sensors = (feet_ground_contact_cfg, self_collision_cfg)
-        if self.scene.terrain is not None and self.scene.terrain.terrain_generator is not None:
-            self.scene.terrain.terrain_generator.curriculum = True
 
         # Viewer
         self.viewer.body_name = "torso_link"
@@ -92,9 +119,6 @@ class AmpRoughEnvCfg(AmpEnvCfg):
         # self.events["reset_from_motion_data"].params["motion_data_weights"] = AMP_MOTION_DATA_WEIGHTS
 
         # Terminations
-        # NOTE: keep max_delay_steps=0 (immediate termination). A fallen robot kept
-        # alive for hundreds of steps on rough terrain can get wedged into the
-        # geometry, and the contact solver then diverges to NaN.
         self.terminations["delay_bad_orientation"] = TerminationTermCfg(
             func=mdp.delay_bad_orientation, params={"max_delay_steps": 0, "limit_angle": math.radians(70.0)}
         )
@@ -120,25 +144,10 @@ class AmpRoughEnvCfg(AmpEnvCfg):
         )
 
         # Action
-        # NOTE: copy before mutating so the asset-level dict (also used by deploy) is
-        # untouched. The formula-derived arm scales (0.25*effort/kp) are too small for
-        # the expert swing amplitudes (~±1 rad): shoulder pitch would need |action|>4,
-        # which the Gaussian policy almost never explores, so it converges to frozen
-        # arms. Enlarging the arm scales puts "swing as hard as the actuators allow"
-        # within the policy's natural output range.
-        action_scale = dict(THS23DOF_ACTION_SCALE)
-        action_scale[".*_shoulder_pitch_joint"] = 0.5
-        action_scale[".*_shoulder_roll_joint"] = 0.5
-        action_scale[".*_elbow_joint"] = 0.5
-        self.actions["joint_pos"].scale = action_scale
+        self.actions["joint_pos"].scale = THS23DOF_ACTION_SCALE
 
         # Basic Reward
-        self.rewards["is_alive"].weight = 0
-        # NOTE: keep this small. With task_reward_lerp=0.1, the effective termination
-        # penalty must stay comparable to the per-step style reward (~1.0), otherwise
-        # early-training fall spikes dominate the return and the policy optimizes for
-        # survival (crouched, contracted limbs) instead of human-like style (AMP paper
-        # uses r = 0.9*r_style + 0.1*r_task).
+        self.rewards["is_alive"].weight = 1
         self.rewards["is_terminated"].weight = -10
         self.rewards["joint_torques_l2"].weight = 0
         self.rewards["joint_vel_l2"].weight = -1.0e-5
@@ -151,6 +160,7 @@ class AmpRoughEnvCfg(AmpEnvCfg):
         self.rewards["joint_energy"].weight = -2e-5
         self.rewards["track_lin_vel_exp"].weight = 1.0
         self.rewards["track_ang_vel_exp"].weight = 0.5
+
         # New Reward
         self.rewards["lin_vel_z_l2"] = RewardTermCfg(func=mdp.lin_vel_z_l2, weight=-0.1)  # 基座Z 轴 上下线速度
         self.rewards["ang_vel_xy_l2"] = RewardTermCfg(func=mdp.ang_vel_xy_l2, weight=-0.1)  # 基座XY轴运动惩罚 -0.1
@@ -181,7 +191,7 @@ class AmpRoughEnvCfg(AmpEnvCfg):
 
 
 @dataclass(kw_only=True)
-class AmpRoughPlayEnvCfg(AmpRoughEnvCfg):
+class AmpFlatPlayEnvCfg(AmpFlatEnvCfg):
     def __post_init__(self):
         super().__post_init__()
         # Effectively infinite episode length.
@@ -190,40 +200,32 @@ class AmpRoughPlayEnvCfg(AmpRoughEnvCfg):
         self.observations["actor"].enable_corruption = False
         self.events.pop("push_robot", None)
         self.curriculum = {}
+
+
+@dataclass(kw_only=True)
+class AmpRoughEnvCfg(AmpFlatEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.sim.mujoco.ccd_iterations = 128
+        self.sim.contact_sensor_maxmatch = 512
+        self.sim.nconmax = 128
+
+        # Scene
+        assert self.scene.terrain is not None
+        self.scene.terrain.terrain_type = "generator"
+        self.scene.terrain.terrain_generator = deepcopy(half_rough_terrain_cfg)
+
+
+@dataclass(kw_only=True)
+class AmpRoughPlayEnvCfg(AmpRoughEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.episode_length_s = int(1e9)
+        self.observations["actor"].enable_corruption = False
+        self.events.pop("push_robot", None)
+        self.curriculum = {}
         self.events["randomize_terrain"] = EventTermCfg(
             func=mdp.randomize_terrain,
             mode="reset",
             params={},
         )
-
-        if self.scene.terrain is not None and self.scene.terrain.terrain_generator is not None:
-            self.scene.terrain.terrain_generator.curriculum = False
-            self.scene.terrain.terrain_generator.num_cols = 5
-            self.scene.terrain.terrain_generator.num_rows = 5
-            self.scene.terrain.terrain_generator.border_width = 10.0
-
-
-@dataclass(kw_only=True)
-class AmpFlatEnvCfg(AmpRoughEnvCfg):
-    def __post_init__(self):
-        super().__post_init__()
-        self.sim.njmax = 640
-        self.sim.mujoco.ccd_iterations = 50
-        self.sim.contact_sensor_maxmatch = 256
-        self.sim.nconmax = None
-
-        # Switch to flat terrain.
-        assert self.scene.terrain is not None
-        self.scene.terrain.terrain_type = "plane"
-        self.scene.terrain.terrain_generator = None
-
-
-@dataclass(kw_only=True)
-class AmpFlatPlayEnvCfg(AmpFlatEnvCfg):
-    def __post_init__(self):
-        super().__post_init__()
-        velocity_cmd = self.commands["base_velocity"]
-        assert isinstance(velocity_cmd, UniformVelocityCommandCfg)
-        velocity_cmd.ranges.lin_vel_x = (-1.5, 3.0)
-        velocity_cmd.ranges.lin_vel_y = (-1.0, 1.0)
-        velocity_cmd.ranges.ang_vel_z = (-3.14 / 2, 3.14 / 2)

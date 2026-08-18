@@ -5,7 +5,7 @@
 
 import math
 from copy import deepcopy
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp import dr
@@ -20,10 +20,8 @@ from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.managers.termination_manager import TerminationTermCfg
 from mjlab.scene import SceneCfg
 from mjlab.sim import MujocoCfg, SimulationCfg
-from mjlab.tasks.velocity import mdp
 from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 from mjlab.terrains import TerrainEntityCfg
-from mjlab.terrains.config import ROUGH_TERRAINS_CFG
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 from mjlab.viewer import ViewerConfig
 
@@ -33,7 +31,7 @@ from . import mdp
 # MDP settings
 ##
 
-AMP_INPUT_STEPS = 3  # Number of past steps to include in the input (for amp discriminator).
+AMP_INPUT_STEPS = 4  # Number of past steps to include in the input (for amp discriminator).
 
 
 commands: dict[str, CommandTermCfg] = {
@@ -333,11 +331,7 @@ class AmpEnvCfg(ManagerBasedRlEnvCfg):
     # Scene settings
     scene: SceneCfg = field(
         default_factory=lambda: SceneCfg(
-            terrain=TerrainEntityCfg(
-                terrain_type="generator",
-                terrain_generator=replace(ROUGH_TERRAINS_CFG),
-                max_init_terrain_level=5,
-            ),
+            terrain=TerrainEntityCfg(terrain_type="plane"),
             num_envs=1,
             env_spacing=2.5,
         )
