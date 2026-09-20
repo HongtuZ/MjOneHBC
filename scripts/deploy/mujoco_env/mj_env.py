@@ -97,8 +97,6 @@ class MujocoEnv:
                 if driven_name == name:
                     self.action2ctrl_ids[i] = act_id
                     break
-        self.reset()
-
         # Set viewer
         self.viewer = mjv.launch_passive(
             model=self.model, data=self.data, show_left_ui=True, show_right_ui=True, key_callback=keyboard_callback
@@ -107,6 +105,17 @@ class MujocoEnv:
         self.viewer.cam.elevation = -10  # 正面视角，轻微向下看
         # # self.viewer.cam.azimuth = 180    # 正面朝向机器人
         self.debug_visualizer = MujocoDebugVisualizer(self.viewer.user_scn, self.model)
+        self.reset()
+
+
+    def _read_sensor(self, name: str) -> np.ndarray:
+        """按名称读取传感器数据（返回副本）。"""
+        sid = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_SENSOR, name)
+        if sid < 0:
+            raise ValueError(f"传感器 {name} 不存在于模型 {self.xml_path}")
+        adr = self.model.sensor_adr[sid]
+        dim = self.model.sensor_dim[sid]
+        return self.data.sensordata[adr : adr + dim].copy()
 
     def compute_torque(
         self,
@@ -125,20 +134,20 @@ class MujocoEnv:
         action = np.clip(action, self.action_clip[:, 0], self.action_clip[:, 1])
         target = action * self.action_scale
         target += self.default_joint_pos
-        start_time = time.perf_counter()
         for _ in range(self.decimation):
+            start_time = time.perf_counter()
             tau = self.compute_torque(target)
             self.data.ctrl[self.action2ctrl_ids] = tau
             self.data.ctrl[:] = np.clip(self.data.ctrl, self.model.actuator_ctrlrange[:, 0], self.model.actuator_ctrlrange[:, 1])
             mj.mj_step(self.model, self.data)
             self.viewer.sync()
             self.viewer.cam.lookat = self.data.qpos[:3]
-        duration = time.perf_counter() - start_time
-        time.sleep(max(0, self.dt * self.decimation - duration))
+            duration = time.perf_counter() - start_time
+            time.sleep(max(0, self.dt - duration))
 
-        # return info
-        base_quat = self.data.qpos[3:7]
-        base_ang_vel = self.data.qvel[3:6]
+        # return info（姿态与角速度从 IMU 传感器读取）
+        base_quat = self._read_sensor("imu_quat")
+        base_ang_vel = self._read_sensor("imu_ang_vel")
         base_rot_inv = R.from_quat(base_quat, scalar_first=True).inv()
         projected_gravity = base_rot_inv.apply(np.array([0, 0, -9.81]))
         projected_gravity = normalize(projected_gravity)
@@ -151,6 +160,18 @@ class MujocoEnv:
             "joint_vel": self.data.qvel[self.jnt_qvel_indices],
             "last_action": action,
         }
+
+        # 打印 obs_info（每个 key 一行，最多 3 位小数）
+        for k, v in obs_info.items():
+            vals = np.asarray(v).ravel()
+            print(f"[OBS] {k}: " + ", ".join(f"{x:.3f}" for x in vals))
+
+        # 打印 qpos vs target 对比（每关节一行：名字 / qpos / target）
+        qpos = self.data.qpos[self.jnt_qpos_indices]
+        print(f"{'joint':<20} {'qpos':>10} {'target':>10}")
+        for name, q, t in zip(self.action_joint_names, qpos, target):
+            print(f"{name:<20} {q:>10.3f} {t:>10.3f}")
+
         done = False
         return obs_info, done
 
@@ -190,16 +211,21 @@ class MujocoEnv:
                 model=self.ghost_model,
             )
 
-    def reset(self, root_pos=None, root_quat=None):
+    def reset(self, root_pos=None, root_quat=None, joint_pos=None):
         mj.mj_resetData(self.model, self.data)
         if root_pos is not None:
             self.data.qpos[:3] = root_pos
         if root_quat is not None:
             self.data.qpos[3:7] = root_quat
-        self.data.qpos[self.jnt_qpos_indices] = self.default_joint_pos
+        if joint_pos is None:
+            joint_pos = self.default_joint_pos
+        self.data.qpos[self.jnt_qpos_indices] = joint_pos
         mj.mj_forward(self.model, self.data)
-        base_quat = self.data.qpos[3:7]
-        base_ang_vel = self.data.qvel[3:6]
+        mj.mj_step(self.model, self.data)
+        self.viewer.sync()
+        self.viewer.cam.lookat = self.data.qpos[:3]
+        base_quat = self._read_sensor("imu_quat")
+        base_ang_vel = self._read_sensor("imu_ang_vel")
         base_rot = R.from_quat(base_quat, scalar_first=True)
         projected_gravity = base_rot.inv().apply(np.array([0, 0, -9.81]))
         projected_gravity = projected_gravity / np.linalg.norm(projected_gravity)

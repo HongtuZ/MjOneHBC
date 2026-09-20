@@ -1,29 +1,24 @@
 """THS23DOF velocity environment configurations."""
 
-from mjlab.envs import ManagerBasedRlEnvCfg
+from dataclasses import dataclass
+
 from mjlab.envs import mdp as envs_mdp
 from mjlab.envs.mdp.actions import JointPositionActionCfg
-from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.managers.event_manager import EventTermCfg
+from mjlab.managers.observation_manager import ObservationTermCfg
 from mjlab.managers.reward_manager import RewardTermCfg
-from mjlab.managers.observation_manager import ObservationGroupCfg, ObservationTermCfg
-from mjlab.utils.noise import UniformNoiseCfg as Unoise
+from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.sensor import (
     ContactMatch,
     ContactSensorCfg,
     ObjRef,
-    RayCastSensorCfg,
-    RingPatternCfg,
     TerrainHeightSensorCfg,
 )
 from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
-from mjlab.tasks.velocity.velocity_env_cfg import make_velocity_env_cfg
 
-import OneHBC.tasks.velocity.mdp as mdp
+from OneHBC.assets.robots import THS23DOF_ACTION_SCALE, THS23DOF_CFG
+from OneHBC.tasks.velocity import mdp
 from OneHBC.tasks.velocity.velocity_env_cfg import VelocityEnvCfg
-from OneHBC.assets.robots import THS23DOF_CFG, THS23DOF_ACTION_SCALE
-
-from dataclasses import dataclass
 
 # Sensors
 foot_height_scan_cfg = TerrainHeightSensorCfg(
@@ -104,21 +99,6 @@ class VelocityRoughEnvCfg(VelocityEnvCfg):
         # Event
         self.events["base_com"].params["asset_cfg"].body_names = ("torso_link",)
         self.events["foot_friction"].params["asset_cfg"].geom_names = r"^(left|right)_foot[1-5]_collision$"
-
-        # Basic Reward
-        self.rewards["is_alive"].weight = 0.15
-        self.rewards["is_terminated"].weight = -1.0
-        self.rewards["joint_torques_l2"].weight = -1.0e-5
-        self.rewards["joint_vel_l2"].weight = -1.0e-3
-        self.rewards["joint_acc_l2"].weight = -2.5e-7
-        self.rewards["action_rate_l2"].weight = -0.05
-        self.rewards["action_acc_l2"].weight = -0.01
-        self.rewards["joint_pos_limits"].weight = -5.0
-        self.rewards["flat_orientation_l2"].weight = -10.0
-        self.rewards["joint_deviation_exp"].weight = -1e-3
-        self.rewards["joint_energy"].weight = -2e-5
-        self.rewards["track_lin_vel_exp"].weight = 1.5
-        self.rewards["track_ang_vel_exp"].weight = 1.5
 
         # New Reward
         self.rewards["feet_gait"] = RewardTermCfg(

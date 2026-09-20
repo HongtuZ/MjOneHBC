@@ -142,31 +142,39 @@ def shoulder_thigh_coordination(
     gain: float = 1.0,
     std: float = 0.5,
     hip_scale: float = 1.5,
+    hip_joint_names: tuple[str, ...] = ("left_hip_pitch_joint", "right_hip_pitch_joint"),
+    arm_joint_names: tuple[str, ...] = ("left_shoulder_pitch_joint", "right_shoulder_pitch_joint"),
 ) -> torch.Tensor:
+    """手臂与大腿摆动反向协调奖励。
+
+    - 双臂机器人（默认 4 个关节）：左臂对右腿、右臂对左腿交叉协调。
+    - 单臂机器人（``arm_joint_names`` 只有 1 个关节）：手臂对双腿摆动差
+      ``(l_hip - r_hip) / 2`` 反向协调。
+    """
     asset = env.scene[asset_cfg.name]
     # 关节索引
-    joint_ids = asset.find_joints(
-        [
-            "left_hip_pitch_joint",
-            "right_hip_pitch_joint",
-            "left_shoulder_pitch_joint",
-            "right_shoulder_pitch_joint",
-        ]
-    )[0]
+    hip_ids = asset.find_joints(hip_joint_names)[0]
+    arm_ids = asset.find_joints(arm_joint_names)[0]
     # 偏移量
-    joint_pos = asset.data.joint_pos[:, joint_ids]
-    default_pos = asset.data.default_joint_pos[:, joint_ids]
-    offset = joint_pos - default_pos
-    # 解包
-    l_hip, r_hip, l_shoulder, r_shoulder = offset.unbind(dim=-1)
-    # 协调目标：手臂 = -hip_scale × 大腿摆动
-    target_l_shoulder = -hip_scale * r_hip
-    target_r_shoulder = -hip_scale * l_hip
-    # 实际误差
-    err_left = torch.abs(l_shoulder - target_l_shoulder)
-    err_right = torch.abs(r_shoulder - target_r_shoulder)
+    hip_offset = asset.data.joint_pos[:, hip_ids] - asset.data.default_joint_pos[:, hip_ids]
+    arm_offset = asset.data.joint_pos[:, arm_ids] - asset.data.default_joint_pos[:, arm_ids]
+    l_hip, r_hip = hip_offset.unbind(dim=-1)
+    if arm_offset.shape[-1] == 1:
+        # 单臂：以双腿摆动差（即腿部摆动的振荡分量）作为协调目标
+        (arm,) = arm_offset.unbind(dim=-1)
+        mean_err = torch.abs(arm + hip_scale * (l_hip - r_hip) / 2.0)
+    else:
+        # 双臂：左右臂分别与前向摆动的对侧大腿反向
+        l_arm, r_arm = arm_offset.unbind(dim=-1)
+        # 协调目标：手臂 = -hip_scale × 大腿摆动
+        target_l_shoulder = -hip_scale * r_hip
+        target_r_shoulder = -hip_scale * l_hip
+        # 实际误差
+        err_left = torch.abs(l_arm - target_l_shoulder)
+        err_right = torch.abs(r_arm - target_r_shoulder)
+        mean_err = (err_left + err_right) / 2
     # 高斯奖励
-    reward = gain * torch.exp(-0.5 * ((err_left + err_right) / 2 / std) ** 2)
+    reward = gain * torch.exp(-0.5 * (mean_err / std) ** 2)
     return reward
 
 

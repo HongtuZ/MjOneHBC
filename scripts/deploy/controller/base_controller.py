@@ -14,6 +14,7 @@ class KeyCode:
     DOWN = 264
     LEFT = 263
     RIGHT = 262
+    PERIOD = 46  # '.'
 
 
 VEL_OBS_NAMES = [
@@ -109,6 +110,12 @@ class BaseRobotController(ABC):
     def _on_step_end(self) -> None:
         """env.step() 之后调用（子类应在此轮询手柄）."""
 
+    def _on_action(self, action) -> None:
+        """每步策略输出 action 后调用（子类可覆盖以记录 action）."""
+
+    def _on_toggle_record(self) -> None:
+        """按下 '.' 键时调用（子类可覆盖以开始/结束记录）."""
+
     def close(self) -> None:
         self.env.close()
 
@@ -117,6 +124,10 @@ class BaseRobotController(ABC):
         """键盘事件入口. Sim 由 GLFW 回调触发，Real 也可手动调用."""
         if keycode == KeyCode.ESC:
             self._exit_flag = True
+            return
+
+        if keycode == KeyCode.PERIOD:
+            self._on_toggle_record()
             return
 
         if self.is_motion_policy:
@@ -177,6 +188,8 @@ class BaseRobotController(ABC):
     # --- 手柄事件钩子（子类可覆盖） ---
     def _on_joystick_select(self):
         print("[BTN] Select -> 重置机器人")
+        if self.env is not None and hasattr(self.env, "enable_control"):
+            self.env.enable_control = False
         self._obs_info = self._reset_env()
         self.policy.reset(
             robot_pos=self._obs_info.get("robot_pos"),
@@ -187,7 +200,7 @@ class BaseRobotController(ABC):
 
     def _on_joystick_start(self):
         print("[BTN] Start -> 重置策略")
-        if self.env is not None and hasattr(self.env, "attribute_exists"):
+        if self.env is not None and hasattr(self.env, "enable_control"):
             self.env.enable_control = True
         self.policy.reset(
             robot_pos=self._obs_info.get("robot_pos"),
@@ -225,6 +238,7 @@ class BaseRobotController(ABC):
                 self.obs_buffer.push(self._obs_info)
                 obs = self.obs_buffer.get_obs()
                 action = self.policy.get_action(obs)
+                self._on_action(action)
 
                 # 3. 步进前钩子
                 self._on_step_start()

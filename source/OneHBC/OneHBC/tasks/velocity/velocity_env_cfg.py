@@ -12,6 +12,7 @@ from mjlab.envs.mdp import dr
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers.action_manager import ActionTermCfg
 from mjlab.managers.command_manager import CommandTermCfg
+from mjlab.managers.curriculum_manager import CurriculumTermCfg
 from mjlab.managers.event_manager import EventTermCfg
 from mjlab.managers.metrics_manager import MetricsTermCfg
 from mjlab.managers.observation_manager import ObservationGroupCfg, ObservationTermCfg
@@ -20,34 +21,78 @@ from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.managers.termination_manager import TerminationTermCfg
 from mjlab.scene import SceneCfg
 from mjlab.sim import MujocoCfg, SimulationCfg
-from mjlab.tasks.velocity import mdp
 from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
-from mjlab.terrains import TerrainEntityCfg
-from mjlab.terrains.config import ROUGH_TERRAINS_CFG
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 from mjlab.viewer import ViewerConfig
+from mjlab.terrains import TerrainEntityCfg
+from mjlab.terrains.terrain_generator import TerrainGeneratorCfg
+import mjlab.terrains as terrain_gen
 
 from . import mdp
+
+##
+# Terrain
+##
+
+rough_terrain_cfg = TerrainEntityCfg(
+    terrain_type="generator",
+    terrain_generator=TerrainGeneratorCfg(
+        size=(8.0, 8.0),
+        num_rows=10,
+        num_cols=10,
+        border_width=20.0,
+        sub_terrains={
+            "flat": terrain_gen.BoxFlatTerrainCfg(proportion=0.3),
+            "rough": terrain_gen.HfRandomUniformTerrainCfg(
+                proportion=0.3,
+                noise_range=(0.01, 0.05),
+                noise_step=0.01,
+                vertical_scale=0.01,
+            ),
+            "tilted_grid": terrain_gen.BoxTiltedGridTerrainCfg(
+                proportion=0.2,
+                grid_width=1.0,
+                tilt_range_deg=20.0,
+                height_range=0.3,
+                platform_width=1.0,
+                border_width=0.25,
+                floor_depth=2.0,
+            ),
+            "pyramid_slope": terrain_gen.HfPyramidSlopedTerrainCfg(
+                proportion=0.1,
+                slope_range=(0.0, 0.7),
+                platform_width=2.0,
+                border_width=0.25,
+            ),
+            "pyramid_slope_inv": terrain_gen.HfPyramidSlopedTerrainCfg(
+                proportion=0.1,
+                slope_range=(0.0, 0.7),
+                platform_width=2.0,
+                border_width=0.25,
+                inverted=True,
+            )
+        },
+    ),
+)
 
 ##
 # MDP settings
 ##
 
-
 commands: dict[str, CommandTermCfg] = {
     "base_velocity": UniformVelocityCommandCfg(
         entity_name="robot",
-        resampling_time_range=(10.0, 10.0),
-        rel_standing_envs=0.02,
-        rel_heading_envs=1.0,
+        resampling_time_range=(3.0, 8.0),
+        rel_standing_envs=0.1,
+        rel_heading_envs=0.3,
         rel_forward_envs=0.2,
         heading_command=True,
         heading_control_stiffness=0.5,
         debug_vis=True,
         ranges=UniformVelocityCommandCfg.Ranges(
-            lin_vel_x=(-0.8, 2.5),
-            lin_vel_y=(-0.8, 0.8),
-            ang_vel_z=(0.0, 0.0),
+            lin_vel_x=(-1.0, 2.0),
+            lin_vel_y=(-1.0, 1.0),
+            ang_vel_z=(-0.5, 0.5),
             heading=(-math.pi, math.pi),
         ),
     )
@@ -131,38 +176,41 @@ events = {
                 "z": (0.01, 0.05),
                 "yaw": (-3.14, 3.14),
             },
-            "velocity_range": {
-                "x": (-0.2, 0.2),
-                "y": (-0.2, 0.2),
-                "z": (-0.2, 0.2),
-                "roll": (-0.2, 0.2),
-                "pitch": (-0.2, 0.2),
-                "yaw": (-0.2, 0.2),
-            },
+            "velocity_range": {},
         },
     ),
     "reset_robot_joints": EventTermCfg(
         func=mdp.reset_joints_by_offset,
         mode="reset",
         params={
-            "position_range": (-0.2, 0.2),
-            "velocity_range": (-0.2, 0.2),
+            "position_range": (0.0, 0.0),
+            "velocity_range": (0.0, 0.0),
             "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
         },
     ),
     "push_robot": EventTermCfg(
         func=mdp.push_by_setting_velocity,
         mode="interval",
-        interval_range_s=(5, 15),
+        interval_range_s=(3.0, 8.0),
         params={
             "velocity_range": {
-                "x": (-0.5, 0.5),
-                "y": (-0.5, 0.5),
-                "z": (-0.4, 0.4),
-                "roll": (-0.52, 0.52),
-                "pitch": (-0.52, 0.52),
+                "x": (-2.0, 2.0),
+                "y": (-2.0, 2.0),
+                "z": (-1.0, 1.0),
+                "roll": (-0.78, 0.78),
+                "pitch": (-0.78, 0.78),
                 "yaw": (-1.0, 1.0),
             },
+        },
+    ),
+    "foot_friction": EventTermCfg(
+        mode="startup",
+        func=dr.geom_friction,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", geom_names=()),  # Set per-robot.
+            "operation": "abs",
+            "ranges": (0.3, 1.2),
+            "shared_random": True,  # All foot geoms share the same friction.
         },
     ),
     "encoder_bias": EventTermCfg(
@@ -180,20 +228,10 @@ events = {
             "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
             "operation": "add",
             "ranges": {
-                0: (-0.025, 0.025),
-                1: (-0.025, 0.025),
-                2: (-0.03, 0.03),
+                0: (-0.05, 0.05),
+                1: (-0.05, 0.05),
+                2: (-0.05, 0.05),
             },
-        },
-    ),
-    "foot_friction": EventTermCfg(
-        mode="startup",
-        func=dr.geom_friction,
-        params={
-            "asset_cfg": SceneEntityCfg("robot", geom_names=()),  # Set per-robot.
-            "operation": "abs",
-            "ranges": (0.3, 1.2),
-            "shared_random": True,  # All foot geoms share the same friction.
         },
     ),
     "pd_gains": EventTermCfg(
@@ -209,40 +247,130 @@ events = {
 }
 
 rewards = {
-    # -- builtin rewards
-    "is_alive": RewardTermCfg(func=mdp.is_alive, weight=1.0),
-    "is_terminated": RewardTermCfg(func=mdp.is_terminated, weight=-1.0),
-    "joint_torques_l2": RewardTermCfg(func=mdp.joint_torques_l2, weight=-1.0e-5),
-    "joint_vel_l2": RewardTermCfg(func=mdp.joint_vel_l2, weight=-1.0e-5),
-    "joint_acc_l2": RewardTermCfg(func=mdp.joint_acc_l2, weight=-2.5e-7),
-    "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.01),
-    "action_acc_l2": RewardTermCfg(func=mdp.action_acc_l2, weight=-0.01),
-    "joint_pos_limits": RewardTermCfg(func=mdp.joint_pos_limits, weight=-0.01),
-    "flat_orientation_l2": RewardTermCfg(func=mdp.flat_orientation_l2, weight=-0.01),
-    "joint_deviation_exp": RewardTermCfg(
-        func=mdp.posture,
-        weight=-0.01,
-        params={"std": {".*": 0.5}, "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",))},
-    ),
-    "joint_energy": RewardTermCfg(
-        func=mdp.electrical_power_cost, weight=-0.01, params={"asset_cfg": SceneEntityCfg("robot", joint_names=(".*",))}
-    ),
-    # -- task
     "track_lin_vel_exp": RewardTermCfg(
-        func=mdp.track_lin_vel_exp, weight=1.0, params={"command_name": "base_velocity", "std": 0.5}
+        func=mdp.track_lin_vel_exp, weight=2.0, params={"command_name": "base_velocity", "std": 0.5}
     ),
     "track_ang_vel_exp": RewardTermCfg(
-        func=mdp.track_ang_vel_exp, weight=0.5, params={"command_name": "base_velocity", "std": 0.5}
+        func=mdp.track_ang_vel_exp, weight=2.0, params={"command_name": "base_velocity", "std": 0.5}
+    ),
+    "upright": RewardTermCfg(
+        func=mdp.upright,
+        weight=1.0,
+        params={
+            "std": math.sqrt(0.2),
+            "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
+        },
+    ),
+    "pose": RewardTermCfg(
+        func=mdp.variable_posture,
+        weight=1.0,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
+            "command_name": "base_velocity",
+            "std_standing": {},  # Set per-robot.
+            "std_walking": {},  # Set per-robot.
+            "std_running": {},  # Set per-robot.
+            "walking_threshold": 0.05,
+            "running_threshold": 1.5,
+        },
+    ),
+    "body_ang_vel": RewardTermCfg(
+        func=mdp.body_angular_velocity_penalty,
+        weight=0.0,  # Override per-robot
+        params={"asset_cfg": SceneEntityCfg("robot", body_names=())},  # Set per-robot.
+    ),
+    "angular_momentum": RewardTermCfg(
+        func=mdp.angular_momentum_penalty,
+        weight=0.0,  # Override per-robot
+        params={"sensor_name": "robot/root_angmom"},
+    ),
+    "dof_pos_limits": RewardTermCfg(func=mdp.joint_pos_limits, weight=-1.0),
+    "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.1),
+    "air_time": RewardTermCfg(
+        func=mdp.feet_air_time,
+        weight=0.0,  # Override per-robot.
+        params={
+            "sensor_name": "feet_ground_contact",
+            "threshold_min": 0.05,
+            "threshold_max": 0.5,
+            "command_name": "base_velocity",
+            "command_threshold": 0.1,
+        },
+    ),
+    "foot_clearance": RewardTermCfg(
+        func=mdp.feet_clearance,
+        weight=-2.0,
+        params={
+            "target_height": 0.1,
+            "height_sensor_name": "foot_height_scan",
+            "command_name": "base_velocity",
+            "command_threshold": 0.05,
+            "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
+        },
+    ),
+    "foot_swing_height": RewardTermCfg(
+        func=mdp.feet_swing_height,
+        weight=-0.25,
+        params={
+            "sensor_name": "feet_ground_contact",
+            "height_sensor_name": "foot_height_scan",
+            "target_height": 0.1,
+            "command_name": "base_velocity",
+            "command_threshold": 0.05,
+        },
+    ),
+    "foot_slip": RewardTermCfg(
+        func=mdp.feet_slip,
+        weight=-0.1,
+        params={
+            "sensor_name": "feet_ground_contact",
+            "command_name": "base_velocity",
+            "command_threshold": 0.05,
+            "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
+        },
+    ),
+    "soft_landing": RewardTermCfg(
+        func=mdp.soft_landing,
+        weight=-1e-5,
+        params={
+            "sensor_name": "feet_ground_contact",
+            "command_name": "base_velocity",
+            "command_threshold": 0.05,
+        },
     ),
 }
 
 
 terminations = {
     "time_out": TerminationTermCfg(func=mdp.time_out, time_out=True),
-    "bad_orientation": TerminationTermCfg(
+    "fell_over": TerminationTermCfg(
         func=mdp.bad_orientation,
+        params={"limit_angle": math.radians(70.0)},
+    ),
+    "out_of_terrain_bounds": TerminationTermCfg(
+        func=mdp.out_of_terrain_bounds,
+        time_out=True,
+    ),
+}
+
+##
+# Curriculum
+##
+
+curriculum = {
+    "terrain_levels": CurriculumTermCfg(
+        func=mdp.terrain_levels_vel,
+        params={"command_name": "base_velocity"},
+    ),
+    "command_vel": CurriculumTermCfg(
+        func=mdp.commands_vel,
         params={
-            "limit_angle": math.radians(60.0),
+            "command_name": "base_velocity",
+            "velocity_stages": [
+                {"step": 0, "lin_vel_x": (-1.0, 1.0), "ang_vel_z": (-0.5, 0.5)},
+                {"step": 5000 * 24, "lin_vel_x": (-1.0, 1.5), "ang_vel_z": (-0.7, 0.7)},
+                {"step": 10000 * 24, "lin_vel_x": (-1.0, 2.0), "ang_vel_z": (-1.0, 1.0)},
+            ],
         },
     ),
 }
@@ -263,11 +391,7 @@ class VelocityEnvCfg(ManagerBasedRlEnvCfg):
     # Scene settings
     scene: SceneCfg = field(
         default_factory=lambda: SceneCfg(
-            terrain=TerrainEntityCfg(
-                terrain_type="generator",
-                terrain_generator=replace(ROUGH_TERRAINS_CFG),
-                max_init_terrain_level=5,
-            ),
+            terrain=deepcopy(rough_terrain_cfg),
             num_envs=1,
             env_spacing=2.5,
         )
@@ -276,6 +400,7 @@ class VelocityEnvCfg(ManagerBasedRlEnvCfg):
     observations: dict = field(default_factory=lambda: deepcopy(observations))
     actions: dict = field(default_factory=lambda: deepcopy(actions))
     commands: dict = field(default_factory=lambda: deepcopy(commands))
+    curriculum: dict = field(default_factory=lambda: deepcopy(curriculum))
     # MDP settings
     rewards: dict = field(default_factory=lambda: deepcopy(rewards))
     terminations: dict = field(default_factory=lambda: deepcopy(terminations))

@@ -1,4 +1,6 @@
-from mjlab.envs.mdp import *  # noqa: F401, F403
+from mjlab.envs.mdp import *
+from mjlab.tasks.velocity.mdp import *
 
-from .rewards import *  # noqa: F401, F403
-from .observations import *  # noqa: F401, F403
+from .observations import *
+from .rewards import *
+from .terminations import *

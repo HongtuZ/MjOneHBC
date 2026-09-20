@@ -1,2 +1,3 @@
 from .ths_23dof import THS23DOF_ACTION_SCALE, THS23DOF_CFG
 from .ths_t2_29dof import THS_T2_29DOF_ACTION_SCALE, THS_T2_29DOF_CFG
+from .ths_ostrich import THS_OSTRICH_ACTION_SCALE, THS_OSTRICH_CFG

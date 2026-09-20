@@ -268,7 +268,7 @@ class OnnxPolicy:
                 scalar_first=True
             )
         else:
-            self.vel_x, self.vel_y, self.ang_vel_z = 1.0, 0.0, 0.0
+            self.vel_x, self.vel_y, self.ang_vel_z = 0.0, 0.0, 0.0
 
 
 @dataclass

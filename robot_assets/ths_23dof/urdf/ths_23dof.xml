@@ -363,6 +363,7 @@
         <velocimeter name="imu_lin_vel" site="imu"/>
         <accelerometer name="imu_lin_acc" site='imu' noise='0.005' cutoff='198'/>
         <!-- 帧四元数传感器              测量站点对象     四元数噪声     关联的站点名称 -->
-        <framequat name='bq' objtype='site' noise='0.001' objname='imu'/>
+        <framequat name='imu_quat' objtype='site' noise='0.001' objname='imu'/>
+        <subtreeangmom name="root_angmom" body="base_link"/>
     </sensor>
 </mujoco>
