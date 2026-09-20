@@ -49,8 +49,8 @@ class ThsRealEnv:
         action = np.clip(action, self.action_clip[:, 0], self.action_clip[:, 1])
         target = action * self.action_scale
         target += self.default_joint_pos
-        start_time = time.perf_counter()
         for _ in range(self.decimation):
+            start_time = time.perf_counter()
             if self.enable_control:
                 self.motor_driver.set_ctrl(pos=target)
             duration = time.perf_counter() - start_time
