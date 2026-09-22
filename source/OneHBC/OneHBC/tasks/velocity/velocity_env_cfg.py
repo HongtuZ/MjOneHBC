@@ -50,13 +50,13 @@ rough_terrain_cfg = TerrainEntityCfg(
                 vertical_scale=0.01,
             ),
             "tilted_grid": terrain_gen.BoxTiltedGridTerrainCfg(
-                proportion=0.2,
+                proportion=0.0,
                 grid_width=1.0,
-                tilt_range_deg=20.0,
-                height_range=0.3,
+                tilt_range_deg=10.0,
+                height_range=0.05,
                 platform_width=1.0,
                 border_width=0.25,
-                floor_depth=2.0,
+                floor_depth=0.1,
             ),
             "pyramid_slope": terrain_gen.HfPyramidSlopedTerrainCfg(
                 proportion=0.1,
@@ -90,7 +90,7 @@ commands: dict[str, CommandTermCfg] = {
         heading_control_stiffness=0.5,
         debug_vis=True,
         ranges=UniformVelocityCommandCfg.Ranges(
-            lin_vel_x=(-1.0, 2.0),
+            lin_vel_x=(-1.0, 1.0),
             lin_vel_y=(-1.0, 1.0),
             ang_vel_z=(-0.5, 0.5),
             heading=(-math.pi, math.pi),
@@ -234,24 +234,24 @@ events = {
             },
         },
     ),
-    "pd_gains": EventTermCfg(
-        mode="startup",
-        func=dr.pd_gains,
-        params={
-            "asset_cfg": SceneEntityCfg("robot", joint_names=(".*_joint")),
-            "operation": "scale",
-            "kp_range": (0.8, 1.2),
-            "kd_range": (0.8, 1.2),
-        },
-    ),
+    # "pd_gains": EventTermCfg(
+    #     mode="startup",
+    #     func=dr.pd_gains,
+    #     params={
+    #         "asset_cfg": SceneEntityCfg("robot", joint_names=(".*_joint")),
+    #         "operation": "scale",
+    #         "kp_range": (0.9, 1.1),
+    #         "kd_range": (0.9, 1.1),
+    #     },
+    # ),
 }
 
 rewards = {
     "track_lin_vel_exp": RewardTermCfg(
-        func=mdp.track_lin_vel_exp, weight=2.0, params={"command_name": "base_velocity", "std": 0.5}
+        func=mdp.track_lin_vel_exp, weight=2.0, params={"command_name": "base_velocity", "std": math.sqrt(0.25)}
     ),
     "track_ang_vel_exp": RewardTermCfg(
-        func=mdp.track_ang_vel_exp, weight=2.0, params={"command_name": "base_velocity", "std": 0.5}
+        func=mdp.track_ang_vel_exp, weight=2.0, params={"command_name": "base_velocity", "std": math.sqrt(0.5)}
     ),
     "upright": RewardTermCfg(
         func=mdp.upright,
@@ -294,7 +294,7 @@ rewards = {
             "threshold_min": 0.05,
             "threshold_max": 0.5,
             "command_name": "base_velocity",
-            "command_threshold": 0.1,
+            "command_threshold": 0.5,
         },
     ),
     "foot_clearance": RewardTermCfg(

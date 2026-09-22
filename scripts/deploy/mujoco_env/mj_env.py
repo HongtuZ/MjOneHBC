@@ -105,6 +105,10 @@ class MujocoEnv:
         self.viewer.cam.elevation = -10  # 正面视角，轻微向下看
         # # self.viewer.cam.azimuth = 180    # 正面朝向机器人
         self.debug_visualizer = MujocoDebugVisualizer(self.viewer.user_scn, self.model)
+        # 整个运行过程中每个关节出现过的最大关节速度（绝对值）
+        self.max_joint_vel = np.zeros(len(self.action_joint_names))
+        # 整个运行过程中每个关节出现过的最大扭矩（绝对值，按 clip 后实际下发的 ctrl 记录）
+        self.max_joint_torque = np.zeros(len(self.action_joint_names))
         self.reset()
 
 
@@ -139,7 +143,9 @@ class MujocoEnv:
             tau = self.compute_torque(target)
             self.data.ctrl[self.action2ctrl_ids] = tau
             self.data.ctrl[:] = np.clip(self.data.ctrl, self.model.actuator_ctrlrange[:, 0], self.model.actuator_ctrlrange[:, 1])
+            np.maximum(self.max_joint_torque, np.abs(self.data.ctrl[self.action2ctrl_ids]), out=self.max_joint_torque)
             mj.mj_step(self.model, self.data)
+            np.maximum(self.max_joint_vel, np.abs(self.data.qvel[self.jnt_qvel_indices]), out=self.max_joint_vel)
             self.viewer.sync()
             self.viewer.cam.lookat = self.data.qpos[:3]
             duration = time.perf_counter() - start_time
@@ -161,6 +167,13 @@ class MujocoEnv:
             "last_action": action,
         }
 
+        self._debug_print(obs_info, target)
+
+        done = False
+        return obs_info, done
+
+    def _debug_print(self, obs_info: dict, target: np.ndarray):
+        """打印调试信息：obs、qpos vs target、以及整个运行过程中的最大关节速度/扭矩。"""
         # 打印 obs_info（每个 key 一行，最多 3 位小数）
         for k, v in obs_info.items():
             vals = np.asarray(v).ravel()
@@ -172,8 +185,10 @@ class MujocoEnv:
         for name, q, t in zip(self.action_joint_names, qpos, target):
             print(f"{name:<20} {q:>10.3f} {t:>10.3f}")
 
-        done = False
-        return obs_info, done
+        # 打印每个关节在整个运行过程中出现过的最大关节速度 / 最大扭矩（绝对值）
+        print(f"{'joint':<20} {'max_vel':>10} {'max_tau':>10}")
+        for name, v, t in zip(self.action_joint_names, self.max_joint_vel, self.max_joint_torque):
+            print(f"{name:<20} {v:>10.3f} {t:>10.3f}")
 
     def show_command(self, velocity_command=None, ref_motion=None):
         self.debug_visualizer.clear()
@@ -213,6 +228,9 @@ class MujocoEnv:
 
     def reset(self, root_pos=None, root_quat=None, joint_pos=None):
         mj.mj_resetData(self.model, self.data)
+        # 重置运行过程中的最大关节速度/扭矩统计
+        self.max_joint_vel[:] = 0.0
+        self.max_joint_torque[:] = 0.0
         if root_pos is not None:
             self.data.qpos[:3] = root_pos
         if root_quat is not None:

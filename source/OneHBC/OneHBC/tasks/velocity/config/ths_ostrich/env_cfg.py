@@ -122,11 +122,11 @@ class VelocityRoughEnvCfg(VelocityEnvCfg):
         }
         self.rewards["pose"].params["std_running"] = {
             # Lower body.
-            r".*hip_pitch.*": 0.6,
-            r".*hip_roll.*": 0.3,
-            r".*hip_yaw.*": 0.3,
-            r".*knee.*": 0.7,
-            r".*ankle.*": 0.5,
+            r".*hip_pitch.*": 0.5,
+            r".*hip_roll.*": 0.2,
+            r".*hip_yaw.*": 0.2,
+            r".*knee.*": 0.6,
+            r".*ankle.*": 0.35,
         }
 
         self.rewards["upright"].params["asset_cfg"].body_names = ("base_link",)
@@ -137,6 +137,8 @@ class VelocityRoughEnvCfg(VelocityEnvCfg):
 
         self.rewards["body_ang_vel"].weight = -0.05
         self.rewards["angular_momentum"].weight = -0.02
+        self.rewards["air_time"].weight = 0.0
+
 
         self.rewards["self_collisions"] = RewardTermCfg(
             func=mdp.self_collision_cost,
