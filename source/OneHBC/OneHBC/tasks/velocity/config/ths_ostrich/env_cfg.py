@@ -6,6 +6,7 @@ from mjlab.envs import mdp as envs_mdp
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers.event_manager import EventTermCfg
 from mjlab.managers.reward_manager import RewardTermCfg
+from mjlab.managers.termination_manager import TerminationTermCfg
 from mjlab.sensor import (
     ContactMatch,
     ContactSensorCfg,
@@ -17,7 +18,6 @@ from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 from OneHBC.assets.robots import THS_OSTRICH_ACTION_SCALE, THS_OSTRICH_CFG
 from OneHBC.tasks.velocity import mdp
 from OneHBC.tasks.velocity.velocity_env_cfg import VelocityEnvCfg
-from mjlab.managers.termination_manager import TerminationTermCfg
 
 # Sensors
 foot_height_scan_cfg = TerrainHeightSensorCfg(
@@ -85,7 +85,12 @@ class VelocityRoughEnvCfg(VelocityEnvCfg):
 
         # Scene
         self.scene.entities = {"robot": THS_OSTRICH_CFG}
-        self.scene.sensors = (foot_height_scan_cfg, feet_ground_contact_cfg, self_collision_cfg, unexpected_ground_contact_cfg)
+        self.scene.sensors = (
+            foot_height_scan_cfg,
+            feet_ground_contact_cfg,
+            self_collision_cfg,
+            unexpected_ground_contact_cfg,
+        )
         if self.scene.terrain is not None and self.scene.terrain.terrain_generator is not None:
             self.scene.terrain.terrain_generator.curriculum = True
 
@@ -101,15 +106,16 @@ class VelocityRoughEnvCfg(VelocityEnvCfg):
         velocity_cmd.viz.z_offset = 1.0
 
         # Event
-        self.events["base_com"].params["asset_cfg"].body_names = ("base_link",)
+        self.events["base_inertia"].params["asset_cfg"].body_names = ("base_link",)
         self.events["foot_friction"].params["asset_cfg"].geom_names = r"^(left|right)_foot[1-3][0-9]_collision"
+        self.events["body_inertia"].params["asset_cfg"].body_names = ("arm_link.*",)
+        self.events["body_inertia"].params["alpha_range"] = (-1, 0.1)
 
         # Termination
         self.terminations["unexpected_ground_collision"] = TerminationTermCfg(
             func=mdp.unexpected_collision,
             params={"sensor_name": unexpected_ground_contact_cfg.name},
         )
-
 
         # Reward
         self.rewards["pose"].params["std_standing"] = {".*": 0.05}
@@ -139,14 +145,11 @@ class VelocityRoughEnvCfg(VelocityEnvCfg):
         self.rewards["angular_momentum"].weight = -0.02
         self.rewards["air_time"].weight = 0.0
 
-
         self.rewards["self_collisions"] = RewardTermCfg(
             func=mdp.self_collision_cost,
             weight=-1.0,
             params={"sensor_name": self_collision_cfg.name, "force_threshold": 10.0},
         )
-
-
 
 
 @dataclass(kw_only=True)

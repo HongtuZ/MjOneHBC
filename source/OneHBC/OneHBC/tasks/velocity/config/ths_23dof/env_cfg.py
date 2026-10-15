@@ -97,7 +97,7 @@ class VelocityRoughEnvCfg(VelocityEnvCfg):
         velocity_cmd.viz.z_offset = 1.15
 
         # Event
-        self.events["base_com"].params["asset_cfg"].body_names = ("torso_link",)
+        self.events["base_inertia"].params["asset_cfg"].body_names = ("torso_link",)
         self.events["foot_friction"].params["asset_cfg"].geom_names = r"^(left|right)_foot[1-5]_collision$"
 
         # New Reward

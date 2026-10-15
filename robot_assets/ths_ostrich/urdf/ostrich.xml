@@ -73,8 +73,8 @@
             <inertial pos="0.0213534 -0.0209931 -0.16454" quat="0.738884 -0.0979388 -0.0460602 0.665084" mass="4.1589" diaginertia="0.0172853 0.016093 0.00761774"/>
             <joint name="left_hip_yaw_joint" class="EC_A6408" pos="0 0 0" axis="0 0.258819 0.965926" range="-2.70526 2.70526" actuatorfrcrange="-70 70"/>
             <geom class="visual" rgba="0.866667 0.909804 1 1" mesh="left_hip_yaw_link"/>
-            <geom name="left_hip_yaw_link_collision" class="collision" type="sphere" size="0.07" pos="0.025 -0.01 -0.182"/>
-            <geom name="left_hip_yaw_link_collision2" class="collision" size="0.04" fromto="0 0.01 0.01 0 -0.01 -0.05"/>
+            <geom name="left_hip_yaw_link1_collision" class="collision" type="sphere" size="0.07" pos="0.025 -0.01 -0.182"/>
+            <geom name="left_hip_yaw_link2_collision" class="collision" size="0.04" fromto="0 0.01 0.01 0 -0.01 -0.05"/>
             <body name="left_shank_link" pos="0.025 0.0129702 -0.182216">
               <inertial pos="0.000486262 -0.0126681 -0.215834" quat="0.73259 -0.0447494 0.0314725 0.678469" mass="2.15365" diaginertia="0.053792 0.0534286 0.00213295"/>
               <joint name="left_knee_joint" class="EC_A10020" pos="0 0 0" axis="0 1 0" range="-2.72271 1.5708" actuatorfrcrange="-330 330"/>
@@ -84,7 +84,7 @@
                 <site name="end_effector_left" size="0.02" pos="0.055 -0.012 -0.077" group="5"/>
                 <site name="left_foot_site" pos="0.12 0 -0.077" size="0.025" group="5"/>
                 <inertial pos="0.0146478 -0.0311319 -0.0462059" quat="0.00148189 0.722069 -0.0834945 0.686762" mass="1.0068" diaginertia="0.00331627 0.00304342 0.00147164"/>
-                <joint name="left_ankle_joint" class="EC_A4310" pos="0 0 0" axis="0 1 0" range="-1.69297 1.74533" actuatorfrcrange="-36 36"/>
+                <joint name="left_ankle_joint" class="EC_A4310" pos="0 0 0" axis="0 1 0" range="-1.69297 1.74533" actuatorfrcrange="-75 75"/>
                 <geom class="visual" rgba="0.866667 0.909804 1 1" mesh="left_foot_link"/>
                 <geom name="left_ankle_link_collision" class="collision" type="sphere" size="0.05" pos="0 -0.03 0"/>
 
@@ -124,8 +124,8 @@
             <inertial pos="0.0213534 0.0209929 -0.16454" quat="0.665084 -0.0460602 -0.0979388 0.738884" mass="4.15891" diaginertia="0.0172853 0.016093 0.00761774"/>
             <joint name="right_hip_yaw_joint" class="EC_A6408" pos="0 0 0" axis="0 -0.258819 0.965926" range="-2.70526 2.70526" actuatorfrcrange="-70 70"/>
             <geom class="visual" rgba="0.866667 0.909804 1 1" mesh="right_hip_yaw_link"/>
-            <geom name="right_hip_yaw_link_collision" class="collision" type="sphere" size="0.07" pos="0.025 0.01 -0.182"/>
-            <geom name="right_hip_yaw_link_collision2" class="collision" size="0.04" fromto="0 -0.01 0.01 0 0.01 -0.05"/>
+            <geom name="right_hip_yaw_link1_collision" class="collision" type="sphere" size="0.07" pos="0.025 0.01 -0.182"/>
+            <geom name="right_hip_yaw_link2_collision" class="collision" size="0.04" fromto="0 -0.01 0.01 0 0.01 -0.05"/>
             <body name="right_shank_link" pos="0.025 -0.0129702 -0.182216">
               <inertial pos="0.000496864 0.011906 -0.212918" quat="0.678469 0.0314725 -0.0447494 0.73259" mass="2.12007" diaginertia="0.053792 0.0534286 0.00213295"/>
               <joint name="right_knee_joint" class="EC_A10020" pos="0 0 0" axis="0 1 0" range="-2.72271 1.5708" actuatorfrcrange="-330 330"/>
@@ -135,7 +135,7 @@
                 <site name="end_effector_right" size="0.02" rgba="0 1 0 1" pos="0.055 0.012 -0.077" group="5"/>
                 <site name="right_foot_site" pos="0.12 0 -0.077" size="0.025" group="5"/>
                 <inertial pos="0.0146478 0.0311319 -0.0462059" quat="-0.00148189 0.722069 0.0834945 0.686762" mass="1.0068" diaginertia="0.00331627 0.00304342 0.00147164"/>
-                <joint name="right_ankle_joint" class="EC_A4310" pos="0 0 0" axis="0 1 0" range="-1.74533 1.69297" actuatorfrcrange="-36 36"/>
+                <joint name="right_ankle_joint" class="EC_A4310" pos="0 0 0" axis="0 1 0" range="-1.74533 1.69297" actuatorfrcrange="-75 75"/>
                 <geom class="visual" rgba="0.866667 0.909804 1 1" mesh="right_foot_link"/>
                 <geom name="right_ankle_link_collision" class="collision" type="sphere" size="0.05" pos="0 0.03 0"/>
 
@@ -162,29 +162,33 @@
           </body>
         </body>
       </body>
-      <!-- 手臂已焊死（fixed）：arm_joint1~7 与 upper_finger_joint 的关节定义已删除。
-           MuJoCo 中 body 不带 joint 即与父 body 刚性焊接，所以手臂没有任何自由度、也不需要执行器，
-           自然不参与观测/动作。若要恢复可动手臂，请从同目录的 ostrich.urdf 重新生成本文件。 -->
       <body name="arm_link1" pos="0.162 0 0.232">
-        <inertial pos="-0.000577024 -0.00567401 0.0314714" quat="0.955478 0.294942 -0.00263867 -0.00801985" mass="0.1838" diaginertia="0.000260151 0.000200709 0.00015592"/>
+        <inertial pos="-0.000577024 -0.00567401 0.0314714" quat="0.955478 0.294942 -0.00263867 -0.00801985" mass="0.61657771" diaginertia="0.000260151 0.000200709 0.00015592"/>
+        <!-- <joint name="arm_joint1" pos="0 0 0" axis="0 0 1" range="-1.5708 1.5708" armature="0.04"/> -->
         <geom class="visual" rgba="0.894118 0.894118 0.894118 1" mesh="arm_link1"/>
         <body name="arm_link2" pos="0 -0.0365 0.047">
-          <inertial pos="0.0569986 0.036427 -0.00979827" quat="-0.00239547 0.820723 -0.000601403 0.57132" mass="0.420418" diaginertia="0.0010327 0.0008396 0.000622607"/>
+          <inertial pos="0.0569986 0.036427 -0.00979827" quat="-0.00239547 0.820723 -0.000601403 0.57132" mass="0.73772419" diaginertia="0.0010327 0.0008396 0.000622607"/>
+          <!-- <joint name="arm_joint2" pos="0 0 0" axis="0 1 0" range="-1.5708 0" armature="0.04"/> -->
           <geom class="visual" rgba="0.894118 0.894118 0.894118 1" mesh="arm_link2"/>
           <body name="arm_link3" pos="0.097366 0.0365 -0.0027391">
-            <inertial pos="0.0311452 0.00388688 0.0179262" quat="-0.0395188 0.495212 0.0803633 0.864144" mass="0.198618" diaginertia="0.000226914 0.000202239 0.000140027"/>
+            <inertial pos="0.0311452 0.00388688 0.0179262" quat="-0.0395188 0.495212 0.0803633 0.864144" mass="0.54282567" diaginertia="0.000226914 0.000202239 0.000140027"/>
+            <!-- <joint name="arm_joint3" pos="0 0 0" axis="0.86603 0 0.5" range="-1.5708 1.5708" armature="0.024"/> -->
             <geom class="visual" rgba="0.894118 0.894118 0.894118 1" mesh="arm_link3"/>
             <body name="arm_link4" pos="0.043301 0.031 0.025">
-              <inertial pos="-0.115795 -0.0232243 0.0619794" quat="0.360212 0.615721 0.445018 0.541382" mass="0.693314" diaginertia="0.00963348 0.00951514 0.000835864"/>
+              <inertial pos="-0.115795 -0.0232243 0.0619794" quat="0.360212 0.615721 0.445018 0.541382" mass="1.03752229" diaginertia="0.00963348 0.00951514 0.000835864"/>
+              <!-- <joint name="arm_joint4" pos="0 0 0" axis="0 1 0" range="0 2.61799" armature="0.024"/> -->
               <geom class="visual" rgba="0.894118 0.894118 0.894118 1" mesh="arm_link4"/>
               <body name="arm_link5" pos="-0.24 -0.0022 0.075">
-                <inertial pos="0.056236 -0.0249005 0.0595458" quat="0.456424 0.503905 0.196305 0.706556" mass="0.186744" diaginertia="0.000815233 0.000754618 0.000226228"/>
+                <inertial pos="0.056236 -0.0249005 0.0595458" quat="0.456424 0.503905 0.196305 0.706556" mass="0.32377014" diaginertia="0.000815233 0.000754618 0.000226228"/>
+                <!-- <joint name="arm_joint5" pos="0 0 0" axis="0 1 0" range="-1.5708 0" armature="0.024"/> -->
                 <geom class="visual" rgba="0.894118 0.894118 0.894118 1" mesh="arm_link5"/>
                 <body name="arm_link6" pos="0.11 -0.013 0.075">
-                  <inertial pos="0.0414503 -0.0141182 -0.00229564" quat="0.726737 0.420981 0.521466 0.150672" mass="0.0976625" diaginertia="0.000130897 0.000125273 9.79096e-05"/>
+                  <inertial pos="0.0414503 -0.0141182 -0.00229564" quat="0.726737 0.420981 0.521466 0.150672" mass="0.23468854" diaginertia="0.000130897 0.000125273 9.79096e-05"/>
+                  <!-- <joint name="arm_joint6" pos="0 0 0" axis="0 1 0" range="-1.5708 1.5708" armature="0.012"/> -->
                   <geom class="visual" rgba="0.894118 0.894118 0.894118 1" mesh="arm_link6"/>
                   <body name="arm_link7" pos="0.055 -0.0158 0.019">
-                    <inertial pos="0.0719752 7.7875e-08 -0.0154891" quat="0.701563 -0.0985221 -0.111832 0.696848" mass="0.227141" diaginertia="0.000334501 0.000252739 0.0001929"/>
+                    <inertial pos="0.0719752 7.7875e-08 -0.0154891" quat="0.701563 -0.0985221 -0.111832 0.696848" mass="0.36416663" diaginertia="0.000334501 0.000252739 0.0001929"/>
+                    <!-- <joint name="arm_joint7" pos="0 0 0" axis="0 0 1" range="-1.22173 1.22173" armature="0.012"/> -->
                     <geom class="visual" rgba="0.894118 0.894118 0.894118 1" mesh="arm_link7"/>
                     <body name="upper_finger_link" pos="0.0867 0 -0.016998">
                       <inertial pos="0.0353083 -0.000551163 0.0355954" quat="0.0193837 0.623571 0.0502783 0.779908" mass="0.0465067" diaginertia="1.03259e-05 8.92618e-06 4.87352e-06"/>
@@ -192,7 +196,6 @@
                     </body>
                     <body name="lower_finger_link" pos="0.0867 0 -0.016998">
                       <inertial pos="0.0353083 0.000550337 -0.0356003" quat="0.0502722 0.779908 0.0193842 0.623571" mass="0.0465067" diaginertia="1.03259e-05 8.92618e-06 4.87352e-06"/>
-                      <!-- <joint name="lower_finger_joint" class="EC_A4310" pos="0 0 0" axis="0 0 1" type="slide" range="0 0.025"/> -->
                       <geom class="visual" rgba="0.894118 0.894118 0.894118 1" mesh="lower_finger_link"/>
                     </body>
                   </body>
@@ -245,12 +248,11 @@
     <motor name="left_hip_roll_act" joint="left_hip_roll_joint" gear="1.00" ctrlrange="-330 330" ctrllimited="true" forcelimited="true" forcerange="-330 330"/>
     <motor name="left_hip_yaw_act" joint="left_hip_yaw_joint" gear="1.00" ctrlrange="-70 70" ctrllimited="true" forcelimited="true" forcerange="-70 70"/>
     <motor name="left_knee_act" joint="left_knee_joint" gear="1.00" ctrlrange="-330 330" ctrllimited="true" forcelimited="true" forcerange="-330 330"/>
-    <motor name="left_ankle_act" joint="left_ankle_joint" gear="1.00" ctrlrange="-36 36" ctrllimited="true" forcelimited="true" forcerange="-36 36"/>
+    <motor name="left_ankle_act" joint="left_ankle_joint" gear="1.00" ctrlrange="-75 75" ctrllimited="true" forcelimited="true" forcerange="-75 75"/>
     <motor name="right_hip_pitch_act" joint="right_hip_pitch_joint" gear="1.00" ctrlrange="-330 330" ctrllimited="true" forcelimited="true" forcerange="-330 330"/>
     <motor name="right_hip_roll_act" joint="right_hip_roll_joint" gear="1.00" ctrlrange="-330 330" ctrllimited="true" forcelimited="true" forcerange="-330 330"/>
     <motor name="right_hip_yaw_act" joint="right_hip_yaw_joint" gear="1.00" ctrlrange="-70 70" ctrllimited="true" forcelimited="true" forcerange="-70 70"/>
     <motor name="right_knee_act" joint="right_knee_joint" gear="1.00" ctrlrange="-330 330" ctrllimited="true" forcelimited="true" forcerange="-330 330"/>
-    <motor name="right_ankle_act" joint="right_ankle_joint" gear="1.00" ctrlrange="-36 36" ctrllimited="true" forcelimited="true" forcerange="-36 36"/>
-
+    <motor name="right_ankle_act" joint="right_ankle_joint" gear="1.00" ctrlrange="-75 75" ctrllimited="true" forcelimited="true" forcerange="-75 75"/>
   </actuator>
 </mujoco>

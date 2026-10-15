@@ -5,8 +5,9 @@
 
 import math
 from copy import deepcopy
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 
+import mjlab.terrains as terrain_gen
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp import dr
 from mjlab.envs.mdp.actions import JointPositionActionCfg
@@ -22,11 +23,10 @@ from mjlab.managers.termination_manager import TerminationTermCfg
 from mjlab.scene import SceneCfg
 from mjlab.sim import MujocoCfg, SimulationCfg
 from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
-from mjlab.utils.noise import UniformNoiseCfg as Unoise
-from mjlab.viewer import ViewerConfig
 from mjlab.terrains import TerrainEntityCfg
 from mjlab.terrains.terrain_generator import TerrainGeneratorCfg
-import mjlab.terrains as terrain_gen
+from mjlab.utils.noise import UniformNoiseCfg as Unoise
+from mjlab.viewer import ViewerConfig
 
 from . import mdp
 
@@ -42,9 +42,9 @@ rough_terrain_cfg = TerrainEntityCfg(
         num_cols=10,
         border_width=20.0,
         sub_terrains={
-            "flat": terrain_gen.BoxFlatTerrainCfg(proportion=0.3),
+            "flat": terrain_gen.BoxFlatTerrainCfg(proportion=0.4),
             "rough": terrain_gen.HfRandomUniformTerrainCfg(
-                proportion=0.3,
+                proportion=0.4,
                 noise_range=(0.01, 0.05),
                 noise_step=0.01,
                 vertical_scale=0.01,
@@ -60,17 +60,17 @@ rough_terrain_cfg = TerrainEntityCfg(
             ),
             "pyramid_slope": terrain_gen.HfPyramidSlopedTerrainCfg(
                 proportion=0.1,
-                slope_range=(0.0, 0.7),
+                slope_range=(0.0, 0.5),
                 platform_width=2.0,
                 border_width=0.25,
             ),
             "pyramid_slope_inv": terrain_gen.HfPyramidSlopedTerrainCfg(
                 proportion=0.1,
-                slope_range=(0.0, 0.7),
+                slope_range=(0.0, 0.5),
                 platform_width=2.0,
                 border_width=0.25,
                 inverted=True,
-            )
+            ),
         },
     ),
 )
@@ -183,7 +183,7 @@ events = {
         func=mdp.reset_joints_by_offset,
         mode="reset",
         params={
-            "position_range": (0.0, 0.0),
+            "position_range": (-0.1, 0.1),
             "velocity_range": (0.0, 0.0),
             "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
         },
@@ -221,29 +221,34 @@ events = {
             "bias_range": (-0.015, 0.015),
         },
     ),
-    "base_com": EventTermCfg(
+    "base_inertia": EventTermCfg(
         mode="startup",
-        func=dr.body_com_offset,
+        func=dr.pseudo_inertia,
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
-            "operation": "add",
-            "ranges": {
-                0: (-0.05, 0.05),
-                1: (-0.05, 0.05),
-                2: (-0.05, 0.05),
-            },
+            "alpha_range": (-0.1, 0.1),  # mass
+            "t_range": (-0.05, 0.05),  # center of mass
         },
     ),
-    # "pd_gains": EventTermCfg(
-    #     mode="startup",
-    #     func=dr.pd_gains,
-    #     params={
-    #         "asset_cfg": SceneEntityCfg("robot", joint_names=(".*_joint")),
-    #         "operation": "scale",
-    #         "kp_range": (0.9, 1.1),
-    #         "kd_range": (0.9, 1.1),
-    #     },
-    # ),
+    "body_inertia": EventTermCfg(
+        mode="startup",
+        func=dr.pseudo_inertia,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
+            "alpha_range": (-0.1, 0.1),  # mass
+            "t_range": (-0.01, 0.01),  # center of mass
+        },
+    ),
+    "pd_gains": EventTermCfg(
+        mode="startup",
+        func=dr.pd_gains,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", joint_names=(".*_joint")),
+            "operation": "scale",
+            "kp_range": (0.9, 1.1),
+            "kd_range": (0.9, 1.1),
+        },
+    ),
 }
 
 rewards = {

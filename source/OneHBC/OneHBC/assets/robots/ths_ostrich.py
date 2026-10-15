@@ -1,10 +1,11 @@
 """THS_OSTRICH constants（手臂已在 ostrich.xml 中焊死，模型只有腿部 10 个自由度）。"""
 
 import mujoco
-
-from OneHBC import ONEHBC_ROOT
 from mjlab.actuator import BuiltinPositionActuatorCfg
 from mjlab.entity import EntityArticulationInfoCfg, EntityCfg
+from mjlab.utils.spec_config import CollisionCfg
+
+from OneHBC import ONEHBC_ROOT
 
 ARMATURE_EC_A10020 = 0.277 * 0.1
 ARMATURE_EC_A6408 = 0.058 * 0.2
@@ -87,6 +88,16 @@ THS_OSTRICH_CFG = EntityCfg(
             ),
         ),
     ),
+    collisions=(
+        CollisionCfg(
+            geom_names_expr=(".*_collision",),
+            contype=1,
+            conaffinity=1,
+            condim={r"^(left|right)_foot[1-9][1-9]_collision$": 3, ".*_collision": 1},
+            priority={r"^(left|right)_foot[1-9][1-9]_collision$": 1, ".*": 0},
+            friction={r"^(left|right)_foot[1-9][1-9]_collision$": (0.6,)},
+        ),
+    ),
 )
 
 THS_OSTRICH_ACTION_SCALE: dict[str, float] = {}
@@ -102,9 +113,8 @@ for a in THS_OSTRICH_CFG.articulation.actuators:
 
 
 if __name__ == "__main__":
-    import mujoco.viewer as viewer
-
     from mjlab.entity.entity import Entity
+    from mujoco import viewer
 
     robot = Entity(THS_OSTRICH_CFG)
 
