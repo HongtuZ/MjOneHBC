@@ -1,3 +1,4 @@
+import sys
 from collections import deque
 from dataclasses import dataclass
 
@@ -17,7 +18,8 @@ class ObsBuffer:
 
     Args:
         obs_names: 观测列表，如 ["base_ang_vel", "projected_gravity", ...]
-        history_length: 历史帧数, 包含当前帧
+        terms_history_length: 历史帧数, 包含当前帧
+        terms_scale: 缩放因子，默认 1.0
         concatenate: get_obs 时是否拼接为单个向量
 
     使用:
@@ -30,16 +32,31 @@ class ObsBuffer:
         obs = buffer.get_obs()  # 根据 concatenate 返回向量或字典
     """
 
-    def __init__(self, obs_names: list, history_length: int = 0, concatenate: bool = True):
+    def __init__(
+        self,
+        obs_names: list,
+        terms_history_length: int | np.ndarray = 1,
+        terms_scale: float | np.ndarray = 1.0,
+        concatenate: bool = True,
+    ):
         self.obs_names = list(obs_names)
-        self.history_length = history_length
+        self.terms_history_length = dict(zip(self.obs_names, self._expand(terms_history_length).astype(int)))
+        self.terms_scale = dict(zip(self.obs_names, self._expand(terms_scale)))
         self.concatenate = concatenate
 
         # 初始化缓冲区：每个 name 一个固定长度 deque
-        self._buffers = {k: deque(maxlen=history_length) for k in self.obs_names}
+        self._buffers = {
+            obs_name: deque(maxlen=int(self.terms_history_length[obs_name])) for obs_name in self.obs_names
+        }
         self._shapes = {}  # 记录每个 name 的单帧 shape
         self._initialized = {k: False for k in self.obs_names}
         self._ready = False
+
+    def _expand(self, value: float | np.ndarray) -> np.ndarray:
+        """将标量广播为与 obs_names 等长的列表，列表原样返回。"""
+        if not isinstance(value, (float, int)):
+            return np.asanyarray(value, dtype=float)
+        return np.asanyarray([value] * len(self.obs_names))
 
     def push(self, obs_dict: dict[str, np.ndarray | list | tuple]):
         # 检查缺失的 key，用 assert 或 raise
@@ -47,11 +64,11 @@ class ObsBuffer:
         assert not missing, f"obs_dict missing keys: {missing}"
 
         for name in self.obs_names:
-            val = np.asarray(obs_dict[name])
+            val = np.asarray(obs_dict[name]) * self.terms_scale[name]
 
             if not self._initialized[name]:
                 self._shapes[name] = val.shape
-                for _ in range(self.history_length):
+                for _ in range(self.terms_history_length[name]):
                     self._buffers[name].append(val.copy())
                 self._initialized[name] = True
             else:
@@ -84,12 +101,13 @@ class ObsBuffer:
             return None
         total = 0
         for name in self.obs_names:
-            total = self.history_length * np.prod(self._shapes[name], dtype=int)
+            total += self.terms_history_length[name] * np.prod(self._shapes[name], dtype=int)
         return total
 
     def reset(self):
         """清空缓冲区"""
-        self._buffers = {k: deque(maxlen=self.history_length) for k in self.obs_names}
+        for q in self._buffers.values():
+            q.clear()
         self._shapes = {}
         self._initialized = {k: False for k in self.obs_names}
         self._ready = False
@@ -171,6 +189,24 @@ class OnnxPolicy:
         joint_damping = parse_ndarray(metadata.get("joint_damping"))
         default_joint_pos = parse_ndarray(metadata.get("default_joint_pos"))
         action_scale = parse_ndarray(metadata.get("action_scale"))
+        observation_names = parse_str_list(metadata.get("observation_names"))
+        observation_terms_scale = parse_ndarray(metadata.get("observation_terms_scale"))
+        # obsercation_terms_flatten_history_dim = parse_ndarray(metadata.get("observation_terms_flatten_history_dim"))
+        observation_terms_history_length = parse_ndarray(metadata.get("observation_terms_history_length"))
+
+        self.obs_buffer = ObsBuffer(
+            obs_names=observation_names,
+            terms_history_length=observation_terms_history_length,
+            terms_scale=observation_terms_scale,
+        )
+        print("---------------onnx observation cfg-------------------")
+        for i, name in enumerate(observation_names):
+            print(
+                i,
+                name,
+                f"his_len={observation_terms_history_length[i]}",
+                f"scale={observation_terms_scale[i]}",
+            )
 
         # Used to create env
         try:
@@ -184,16 +220,16 @@ class OnnxPolicy:
                 )
                 for i in range(len(joint_names))
             ]
-            print('---------------onnx action joint cfg-------------------')
+            print("---------------onnx action joint cfg-------------------")
             for i, cfg in enumerate(self.action_joint_cfg):
                 print(i, cfg)
-        except Exception:
+        except IndexError:
             print(
                 "[Error]: Please check your onnx export, should include "
                 "[command_name, joint_names, joint_stiffness, joint_damping, default_joint_pos, action_scale] "
                 "in the onnx model metadata_props!"
             )
-            exit()
+            sys.exit(1)
 
         # Command
         if self.command_name == "motion":
@@ -214,7 +250,9 @@ class OnnxPolicy:
         else:
             self.vel_x, self.vel_y, self.ang_vel_z = 0.0, 0.0, 0.0
 
-    def get_action(self, obs):
+    def get_action(self, obs_dict):
+        self.obs_buffer.push(obs_dict)
+        obs = self.obs_buffer.get_obs()
         if self.command_name == "motion":
             return self.session.run(
                 None,
@@ -250,10 +288,11 @@ class OnnxPolicy:
             self.motion_step_t += 1
             return motion_command
         else:
-            return {"velocity_command": np.array([self.vel_x, self.vel_y, self.ang_vel_z])}
+            return {"velocity_commands": np.array([self.vel_x, self.vel_y, self.ang_vel_z])}
 
     def reset(self, robot_pos=None, robot_quat=None):
         # robot_pos (xyz), robot_quat (wxyz): used to compute mition command
+        self.obs_buffer.reset()
         if self.command_name == "motion":
             self.motion_step_t = 0
             robot_rot = R.from_quat(robot_quat, scalar_first=True)
@@ -279,3 +318,12 @@ class ActionJointCfg:
     kd: float = 0.0
     scale: float = 1.0
     clip: tuple[float, float] | None = None
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", type=str, required=True)
+    args = parser.parse_args()
+    policy = OnnxPolicy(args.model)

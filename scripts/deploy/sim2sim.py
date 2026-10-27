@@ -8,13 +8,14 @@ from mujoco_env.mj_env import MujocoEnv
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 
+
 class SimController(BaseRobotController):
     """
     MuJoCo 键盘 + 可选手柄.
     手柄在 _on_step_end 中轮询.
     """
 
-    def __init__(self, xml_path: str, model_path: str, obs_names=None, use_joystick=False):
+    def __init__(self, xml_path: str, model_path: str, use_joystick=False):
         self.xml_path = xml_path
         self._init_pos, self._init_quat = self._resolve_init_pose(model_path)
 
@@ -25,7 +26,7 @@ class SimController(BaseRobotController):
 
             self.joystick = JoystickReader(cpu_id=1)
 
-        super().__init__(model_path, obs_names)
+        super().__init__(model_path)
 
         # action 记录状态
         self._recording = False
@@ -51,7 +52,7 @@ class SimController(BaseRobotController):
     def _on_step_start(self) -> None:
         """在 env.step 之前更新可视化."""
         self.env.show_command(
-            velocity_command=self._obs_info.get("velocity_command"),
+            velocity_command=self._obs_info.get("velocity_commands"),
             ref_motion=self._obs_info.get("ref_motion"),
         )
 
@@ -110,7 +111,7 @@ class SimController(BaseRobotController):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, required=True)
-    parser.add_argument("--xml", type=str, default=str(ROOT_DIR / "robot_assets/ths_23dof/urdf/ths_23dof.xml"))
+    parser.add_argument("--xml", type=str, default=str(ROOT_DIR / "robot_assets/ths_ostrich/urdf/ostrich.xml"))
     args = parser.parse_args()
 
     controller = SimController(xml_path=args.xml, model_path=args.model, use_joystick=False)

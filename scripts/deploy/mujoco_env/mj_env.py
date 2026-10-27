@@ -164,7 +164,7 @@ class MujocoEnv:
             "projected_gravity": projected_gravity,
             "joint_pos": self.data.qpos[self.jnt_qpos_indices] - self.default_joint_pos,
             "joint_vel": self.data.qvel[self.jnt_qvel_indices],
-            "last_action": action,
+            "actions": action,
         }
 
         self._debug_print(obs_info, target)
@@ -254,7 +254,7 @@ class MujocoEnv:
             "projected_gravity": projected_gravity,
             "joint_pos": self.data.qpos[self.jnt_qpos_indices] - self.default_joint_pos,
             "joint_vel": self.data.qvel[self.jnt_qvel_indices],
-            "last_action": np.zeros(len(self.data.ctrl)),
+            "actions": np.zeros(len(self.data.ctrl)),
         }
 
     def close(self):

@@ -41,7 +41,7 @@ feet_ground_contact_cfg = ContactSensorCfg(
     name="feet_ground_contact",
     primary=ContactMatch(
         mode="subtree",
-        pattern=r"^(left_foot_link|right_foot_link)$",
+        pattern=r"^(left_ankle_pitch_link|right_ankle_pitch_link)$",
         entity="robot",
     ),
     secondary=ContactMatch(mode="body", pattern="terrain"),
@@ -64,7 +64,7 @@ unexpected_ground_contact_cfg = ContactSensorCfg(
     name="unexpected_ground_contact",
     primary=ContactMatch(
         mode="body",
-        pattern=r"^(left_hip_pitch_link|right_hip_pitch_link|left_hip_yaw_link|right_hip_yaw_link|base_link)$",
+        pattern=r"^(left_hip_pitch_link|right_hip_pitch_link|left_hip_roll_link|right_hip_roll_link|left_hip_yaw_link|right_hip_yaw_link|left_knee_link|right_knee_link|base_link)$",
         entity="robot",
     ),
     secondary=ContactMatch(mode="body", pattern="terrain"),
@@ -107,9 +107,9 @@ class VelocityRoughEnvCfg(VelocityEnvCfg):
 
         # Event
         self.events["base_inertia"].params["asset_cfg"].body_names = ("base_link",)
-        self.events["foot_friction"].params["asset_cfg"].geom_names = r"^(left|right)_foot[1-3][0-9]_collision"
+        self.events["foot_friction"].params["asset_cfg"].geom_names = r"^(left|right)_ankle_.*_collision"
         self.events["body_inertia"].params["asset_cfg"].body_names = ("arm_link.*",)
-        self.events["body_inertia"].params["alpha_range"] = (-1, 0.1)
+        self.events["body_inertia"].params["alpha_range"] = (-0.1, 0.1)
 
         # Termination
         self.terminations["unexpected_ground_collision"] = TerminationTermCfg(
@@ -123,7 +123,7 @@ class VelocityRoughEnvCfg(VelocityEnvCfg):
             r".*hip_pitch.*": 0.3,
             r".*hip_roll.*": 0.15,
             r".*hip_yaw.*": 0.15,
-            r".*knee.*": 0.35,
+            r".*knee.*": 0.5,
             r".*ankle.*": 0.25,
         }
         self.rewards["pose"].params["std_running"] = {
@@ -131,7 +131,7 @@ class VelocityRoughEnvCfg(VelocityEnvCfg):
             r".*hip_pitch.*": 0.5,
             r".*hip_roll.*": 0.2,
             r".*hip_yaw.*": 0.2,
-            r".*knee.*": 0.6,
+            r".*knee.*": 0.8,
             r".*ankle.*": 0.35,
         }
 

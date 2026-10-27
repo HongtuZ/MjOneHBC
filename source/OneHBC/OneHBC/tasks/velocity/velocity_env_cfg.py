@@ -91,7 +91,7 @@ commands: dict[str, CommandTermCfg] = {
         debug_vis=True,
         ranges=UniformVelocityCommandCfg.Ranges(
             lin_vel_x=(-1.0, 1.0),
-            lin_vel_y=(-1.0, 1.0),
+            lin_vel_y=(-0.5, 0.5),
             ang_vel_z=(-0.5, 0.5),
             heading=(-math.pi, math.pi),
         ),
@@ -132,7 +132,7 @@ observations = {
             ),
             "actions": ObservationTermCfg(func=mdp.last_action),
         },
-        history_length=1,
+        history_length=4,
         concatenate_terms=True,
         enable_corruption=True,
     ),
@@ -159,7 +159,7 @@ observations = {
             ),
             "actions": ObservationTermCfg(func=mdp.last_action),
         },
-        history_length=3,
+        history_length=4,
         concatenate_terms=True,
         enable_corruption=False,
     ),
@@ -199,7 +199,7 @@ events = {
                 "z": (-1.0, 1.0),
                 "roll": (-0.78, 0.78),
                 "pitch": (-0.78, 0.78),
-                "yaw": (-1.0, 1.0),
+                "yaw": (-1.57, 1.57),
             },
         },
     ),
@@ -253,10 +253,10 @@ events = {
 
 rewards = {
     "track_lin_vel_exp": RewardTermCfg(
-        func=mdp.track_lin_vel_exp, weight=2.0, params={"command_name": "base_velocity", "std": math.sqrt(0.25)}
+        func=mdp.track_lin_vel_exp, weight=3.0, params={"command_name": "base_velocity", "std": math.sqrt(0.25)}
     ),
     "track_ang_vel_exp": RewardTermCfg(
-        func=mdp.track_ang_vel_exp, weight=2.0, params={"command_name": "base_velocity", "std": math.sqrt(0.5)}
+        func=mdp.track_ang_vel_exp, weight=3.0, params={"command_name": "base_velocity", "std": math.sqrt(0.25)}
     ),
     "upright": RewardTermCfg(
         func=mdp.upright,
@@ -374,7 +374,7 @@ curriculum = {
             "velocity_stages": [
                 {"step": 0, "lin_vel_x": (-1.0, 1.0), "ang_vel_z": (-0.5, 0.5)},
                 {"step": 5000 * 24, "lin_vel_x": (-1.0, 1.5), "ang_vel_z": (-0.7, 0.7)},
-                {"step": 10000 * 24, "lin_vel_x": (-1.0, 2.0), "ang_vel_z": (-1.0, 1.0)},
+                {"step": 10000 * 24, "lin_vel_x": (-1.0, 1.5), "ang_vel_z": (-1.0, 1.0)},
             ],
         },
     ),

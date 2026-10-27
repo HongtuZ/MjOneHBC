@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .helper import ObsBuffer, OnnxPolicy
+from .helper import OnnxPolicy
 
 
 # ==================== 常量 ====================
@@ -15,25 +15,6 @@ class KeyCode:
     LEFT = 263
     RIGHT = 262
     PERIOD = 46  # '.'
-
-
-VEL_OBS_NAMES = [
-    "base_ang_vel",
-    "projected_gravity",
-    "velocity_command",
-    "joint_pos",
-    "joint_vel",
-    "last_action",
-]
-
-MOTION_OBS_NAMES = [
-    "motion_command",
-    "motion_anchor_ori_b",
-    "base_ang_vel",
-    "joint_pos",
-    "joint_vel",
-    "last_action",
-]
 
 
 # ==================== 工具 ====================
@@ -62,8 +43,6 @@ class BaseRobotController(ABC):
     def __init__(
         self,
         model_path: str,
-        obs_names: list[str] | None = None,
-        obs_history_length=1,
         is_real_env=False,
     ):
         # 1. 策略
@@ -73,19 +52,10 @@ class BaseRobotController(ABC):
         )
         self.is_motion_policy: bool = self.policy.command_name == "motion"
 
-        # 2. 观测名（可自定义，默认自动推断）
-        if obs_names is None:
-            obs_names = MOTION_OBS_NAMES if self.is_motion_policy else VEL_OBS_NAMES
-        self.obs_buffer = ObsBuffer(
-            obs_names=obs_names,
-            history_length=obs_history_length,
-            concatenate=True,
-        )
-
-        # 3. 环境（子类创建）
+        # 2. 环境（子类创建）
         self.env = self._create_env()
 
-        # 4. 内部状态
+        # 3. 内部状态
         self._obs_info: dict[str, np.ndarray] = {}
         self._done = False
         self._exit_flag = False
@@ -195,7 +165,6 @@ class BaseRobotController(ABC):
             robot_pos=self._obs_info.get("robot_pos"),
             robot_quat=self._obs_info.get("robot_quat"),
         )
-        self.obs_buffer.reset()
         self.running_mode = False
 
     def _on_joystick_start(self):
@@ -206,7 +175,6 @@ class BaseRobotController(ABC):
             robot_pos=self._obs_info.get("robot_pos"),
             robot_quat=self._obs_info.get("robot_quat"),
         )
-        self.obs_buffer.reset()
         self.running_mode = False
 
     def _on_joystick_cross(self):
@@ -235,9 +203,7 @@ class BaseRobotController(ABC):
                 self._obs_info.update(self.policy.get_command(self._obs_info.get("robot_quat")))
 
                 # 2. 组装观测 & 策略推理
-                self.obs_buffer.push(self._obs_info)
-                obs = self.obs_buffer.get_obs()
-                action = self.policy.get_action(obs)
+                action = self.policy.get_action(self._obs_info)
                 self._on_action(action)
 
                 # 3. 步进前钩子

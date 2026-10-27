@@ -24,7 +24,6 @@ class ThsOstrichController(BaseRobotController):
     def __init__(
         self,
         model_path: str,
-        obs_names=None,
         joystick_cpu_id: int = 1,
         imu_type: str = "yis320",
         test_mode: bool = False,
@@ -35,7 +34,7 @@ class ThsOstrichController(BaseRobotController):
         self.print_interval = max(1, print_interval)
         self._step_count = 0
         self.joystick = JoystickReader(cpu_id=joystick_cpu_id)
-        super().__init__(model_path, obs_names)
+        super().__init__(model_path)
 
     def _create_env(self):
         return ThsOstrichEnv(
@@ -60,12 +59,16 @@ class ThsOstrichController(BaseRobotController):
     def _print_velocity_command(self) -> None:
         """打印当前 policy 的速度指令."""
         if self.is_motion_policy:
-            print(f"[VEL-CMD] step={self._step_count} (motion policy) "
-                  f"motion_step_t={self.policy.motion_step_t} running_mode={self.running_mode}")
+            print(
+                f"[VEL-CMD] step={self._step_count} (motion policy) "
+                f"motion_step_t={self.policy.motion_step_t} running_mode={self.running_mode}"
+            )
         else:
-            print(f"[VEL-CMD] step={self._step_count} vel_x={self.policy.vel_x:+.3f} "
-                  f"vel_y={self.policy.vel_y:+.3f} ang_vel_z={self.policy.ang_vel_z:+.3f} "
-                  f"running_mode={self.running_mode}")
+            print(
+                f"[VEL-CMD] step={self._step_count} vel_x={self.policy.vel_x:+.3f} "
+                f"vel_y={self.policy.vel_y:+.3f} ang_vel_z={self.policy.ang_vel_z:+.3f} "
+                f"running_mode={self.running_mode}"
+            )
 
     def close(self) -> None:
         self.joystick.close()
@@ -127,29 +130,39 @@ class ThsOstrichController(BaseRobotController):
         abs_error = np.abs(error)
         interval = self.env.dt * self.env.decimation
 
-        print(f"\n[TEST] step={self._step_count} t={self._step_count * interval:.2f}s "
-              f"手柄={'已连接' if self.joystick.connected else '未连接'}")
+        print(
+            f"\n[TEST] step={self._step_count} t={self._step_count * interval:.2f}s "
+            f"手柄={'已连接' if self.joystick.connected else '未连接'}"
+        )
         if show_joint_table:
             print(f"{'关节':<26}{'目标(rad)':>12}{'实际(rad)':>12}{'差值(rad)':>12}{'速度(rad/s)':>13}")
             for i, name in enumerate(names):
                 print(f"{name:<26}{target[i]:>12.4f}{position[i]:>12.4f}{error[i]:>12.4f}{velocity[i]:>13.4f}")
-        print(f"[TARGET-DIFF] max={abs_error.max():.4f} mean={abs_error.mean():.4f} "
-              f"最大关节={names[int(abs_error.argmax())]}")
+        print(
+            f"[TARGET-DIFF] max={abs_error.max():.4f} mean={abs_error.mean():.4f} "
+            f"最大关节={names[int(abs_error.argmax())]}"
+        )
 
-        print(f"[IMU] quat(wxyz)={_format(self.env.imu.quaternion)} "
-              f"gyro(rad/s)={_format(self.env.imu.gyro)} "
-              f"euler(rad)={_format(self.env.imu.euler)}")
+        print(
+            f"[IMU] quat(wxyz)={_format(self.env.imu.quaternion)} "
+            f"gyro(rad/s)={_format(self.env.imu.gyro)} "
+            f"euler(rad)={_format(self.env.imu.euler)}"
+        )
 
         joy = self.joystick.state
-        print(f"[JOY] left={_format(joy.left_stick)} right={_format(joy.right_stick)} hat={joy.hats} "
-              f"cross={int(joy.button_cross)} triangle={int(joy.button_triangle)} "
-              f"select={int(joy.button_select)} start={int(joy.button_start)} mode={int(joy.button_mode)}")
+        print(
+            f"[JOY] left={_format(joy.left_stick)} right={_format(joy.right_stick)} hat={joy.hats} "
+            f"cross={int(joy.button_cross)} triangle={int(joy.button_triangle)} "
+            f"select={int(joy.button_select)} start={int(joy.button_start)} mode={int(joy.button_mode)}"
+        )
 
         if self.is_motion_policy:
             print(f"[CMD] motion_step_t={self.policy.motion_step_t} running_mode={self.running_mode}")
         else:
-            print(f"[CMD] vel_x={self.policy.vel_x:+.2f} vel_y={self.policy.vel_y:+.2f} "
-                  f"ang_vel_z={self.policy.ang_vel_z:+.2f} running_mode={self.running_mode}")
+            print(
+                f"[CMD] vel_x={self.policy.vel_x:+.2f} vel_y={self.policy.vel_y:+.2f} "
+                f"ang_vel_z={self.policy.ang_vel_z:+.2f} running_mode={self.running_mode}"
+            )
 
 
 if __name__ == "__main__":

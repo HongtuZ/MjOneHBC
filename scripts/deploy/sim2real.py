@@ -15,11 +15,10 @@ class RealController(BaseRobotController):
     def __init__(
         self,
         model_path: str,
-        obs_names=None,
         joystick_cpu_id: int = 1,
     ):
         self.joystick = JoystickReader(cpu_id=joystick_cpu_id)
-        super().__init__(model_path, obs_names)
+        super().__init__(model_path)
 
     def _create_env(self):
         return ThsRealEnv(physic_dt=0.005, decimation=4, action_joint_cfg=self.policy.action_joint_cfg, imu_type="wit")
