@@ -15,6 +15,12 @@ class KeyCode:
     LEFT = 263
     RIGHT = 262
     PERIOD = 46  # '.'
+    W = 87
+    S = 83
+    A = 65
+    D = 68
+    Q = 81
+    E = 69
 
 
 # ==================== 工具 ====================
@@ -50,7 +56,7 @@ class BaseRobotController(ABC):
             onnx_policy_path=model_path,
             is_real_env=is_real_env,
         )
-        self.is_motion_policy: bool = self.policy.command_name == "motion"
+        self.is_motion_policy: bool = "motion" in self.policy.command_names
 
         # 2. 环境（子类创建）
         self.env = self._create_env()
@@ -116,6 +122,19 @@ class BaseRobotController(ABC):
                 self.policy.ang_vel_z += 0.1
             elif keycode == KeyCode.RIGHT:
                 self.policy.ang_vel_z -= 0.1
+            elif keycode == KeyCode.A:
+                self.policy.vel_y += 0.1
+            elif keycode == KeyCode.D:
+                self.policy.vel_y -= 0.1
+            elif keycode == KeyCode.W:
+                self.policy.base_height += 0.1
+            elif keycode == KeyCode.S:
+                self.policy.base_height -= 0.1
+            elif keycode == KeyCode.Q:
+                self.policy.base_height = 0.0
+            elif keycode == KeyCode.E:
+                self.policy.base_height = 1.0
+            self.policy.base_height = np.clip(self.policy.base_height, 0, 1)
 
     def handle_joystick(self, joy) -> None:
         """手柄轮询入口. 包含上升沿检测与连续命令映射."""
@@ -154,6 +173,9 @@ class BaseRobotController(ABC):
             self.policy.vel_x = stick2cmd(-joy.left_stick[1], -0.5, 2.5)
             self.policy.vel_y = stick2cmd(-joy.left_stick[0], -1.0, 1.0)
             self.policy.ang_vel_z = stick2cmd(-joy.right_stick[0], -1.0, 1.0)
+            self.policy.base_height -= 0.01 * joy.button_rb
+            self.policy.base_height += 0.01 * joy.button_rb
+            self.policy.base_height = np.clip(self.policy.base_height, 0.0, 1.0)
 
     # --- 手柄事件钩子（子类可覆盖） ---
     def _on_joystick_select(self):

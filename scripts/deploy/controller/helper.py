@@ -183,7 +183,7 @@ class OnnxPolicy:
         # Load metadata
         onnx_model = onnx.load(self.onnx_policy_path)
         metadata = {prop.key: prop.value for prop in onnx_model.metadata_props}
-        self.command_name = metadata.get("command_names", "base_velocity")
+        self.command_names = parse_str_list(metadata.get("command_names"))
         joint_names = parse_str_list(metadata.get("joint_names"))
         joint_stiffness = parse_ndarray(metadata.get("joint_stiffness"))
         joint_damping = parse_ndarray(metadata.get("joint_damping"))
@@ -194,20 +194,21 @@ class OnnxPolicy:
         # obsercation_terms_flatten_history_dim = parse_ndarray(metadata.get("observation_terms_flatten_history_dim"))
         observation_terms_history_length = parse_ndarray(metadata.get("observation_terms_history_length"))
 
+        # Init joint pos: if onnx metadata has init_joint_pos, use it; otherwise use default_joint_pos
+        self.init_joint_pos = parse_ndarray(metadata.get("init_joint_pos")) if metadata.get("init_joint_pos") else default_joint_pos
+
+        print("---------------onnx metadata-------------------")
+        for k, v in metadata.items():
+            print(f"{k}: {v}")
+        print("---------------onnx observation cfg-------------------")
+        for i, name in enumerate(observation_names):
+            print(f"{i} {name}: his_len={observation_terms_history_length[i]}, scale={observation_terms_scale[i]}")
+
         self.obs_buffer = ObsBuffer(
             obs_names=observation_names,
             terms_history_length=observation_terms_history_length,
             terms_scale=observation_terms_scale,
         )
-        print("---------------onnx observation cfg-------------------")
-        for i, name in enumerate(observation_names):
-            print(
-                i,
-                name,
-                f"his_len={observation_terms_history_length[i]}",
-                f"scale={observation_terms_scale[i]}",
-            )
-
         # Used to create env
         try:
             self.action_joint_cfg = [
@@ -226,13 +227,15 @@ class OnnxPolicy:
         except IndexError:
             print(
                 "[Error]: Please check your onnx export, should include "
-                "[command_name, joint_names, joint_stiffness, joint_damping, default_joint_pos, action_scale] "
+                "[command_names, joint_names, joint_stiffness, joint_damping, default_joint_pos, action_scale] "
                 "in the onnx model metadata_props!"
             )
             sys.exit(1)
 
         # Command
-        if self.command_name == "motion":
+        self.vel_x, self.vel_y, self.ang_vel_z = 0.0, 0.0, 0.0
+        self.base_height = 0.0
+        if "motion" in self.command_names:
             self.motion_anchor_body_name = metadata.get("anchor_body_name", "base_link")
             self.motion_body_names = parse_str_list(metadata.get("body_names"))
             self.motion_step_t = 0
@@ -247,13 +250,11 @@ class OnnxPolicy:
             self.motion_joint_vel = self.motion["joint_vel"].copy()
             self.motion_anchor_pos_w = self.motion["body_pos_w"][:, motion_anchor_body_idx].copy()
             self.motion_anchor_quat_w = self.motion["body_quat_w"][:, motion_anchor_body_idx].copy()
-        else:
-            self.vel_x, self.vel_y, self.ang_vel_z = 0.0, 0.0, 0.0
 
     def get_action(self, obs_dict):
         self.obs_buffer.push(obs_dict)
         obs = self.obs_buffer.get_obs()
-        if self.command_name == "motion":
+        if "motion" in self.command_names:
             return self.session.run(
                 None,
                 {
@@ -265,7 +266,10 @@ class OnnxPolicy:
             return self.session.run(None, {self.session.get_inputs()[0].name: obs.reshape(1, -1)})[0].squeeze()
 
     def get_command(self, robot_quat=None):
-        if self.command_name == "motion":
+        command = {}
+        command.update({"velocity_commands": np.array([self.vel_x, self.vel_y, self.ang_vel_z])})
+        command.update({"height_commands": np.array([self.base_height])})
+        if "motion" in self.command_names:
             if robot_quat is None:
                 raise ValueError("robot_quat is needed when command is motion!")
             step_t = min(self.motion["joint_pos"].shape[0] - 1, self.motion_step_t)
@@ -286,14 +290,15 @@ class OnnxPolicy:
                 },
             }
             self.motion_step_t += 1
-            return motion_command
-        else:
-            return {"velocity_commands": np.array([self.vel_x, self.vel_y, self.ang_vel_z])}
+            command.update(motion_command)
+        return command
 
     def reset(self, robot_pos=None, robot_quat=None):
         # robot_pos (xyz), robot_quat (wxyz): used to compute mition command
         self.obs_buffer.reset()
-        if self.command_name == "motion":
+        self.vel_x, self.vel_y, self.ang_vel_z = 0.0, 0.0, 0.0
+        self.base_height = 0.0
+        if "motion" in self.command_names:
             self.motion_step_t = 0
             robot_rot = R.from_quat(robot_quat, scalar_first=True)
             motion_anchor_rot = R.from_quat(self.motion_anchor_quat_w[self.motion_step_t], scalar_first=True)
@@ -306,8 +311,6 @@ class OnnxPolicy:
             self.motion_anchor_quat_w = (delta_rot * R.from_quat(self.motion_anchor_quat_w, scalar_first=True)).as_quat(
                 scalar_first=True
             )
-        else:
-            self.vel_x, self.vel_y, self.ang_vel_z = 0.0, 0.0, 0.0
 
 
 @dataclass

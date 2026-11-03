@@ -107,10 +107,11 @@ class JoystickReader:
     def state(self) -> JoystickState:
         """获取当前完整状态（拷贝）"""
         with self._axes.get_lock(), self._buttons.get_lock(), self._hats_x.get_lock(), self._hats_y.get_lock():
+            hats = self.hats
             return JoystickState(
                 left_stick=self.left_stick,
                 right_stick=self.right_stick,
-                hats=self.hats[0],
+                hats=hats[0] if hats else (0, 0),
                 button_cross=self.button_cross(),
                 button_circle=self.button_circle(),
                 button_square=self.button_square(),

@@ -1,0 +1,485 @@
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+import math
+from copy import deepcopy
+from dataclasses import dataclass, field
+
+import mjlab.terrains as terrain_gen
+from mjlab.envs import ManagerBasedRlEnvCfg
+from mjlab.envs.mdp import dr
+from mjlab.envs.mdp.actions import JointPositionActionCfg
+from mjlab.managers.action_manager import ActionTermCfg
+from mjlab.managers.command_manager import CommandTermCfg
+from mjlab.managers.curriculum_manager import CurriculumTermCfg
+from mjlab.managers.event_manager import EventTermCfg
+from mjlab.managers.metrics_manager import MetricsTermCfg
+from mjlab.managers.observation_manager import ObservationGroupCfg, ObservationTermCfg
+from mjlab.managers.reward_manager import RewardTermCfg
+from mjlab.managers.scene_entity_config import SceneEntityCfg
+from mjlab.managers.termination_manager import TerminationTermCfg
+from mjlab.scene import SceneCfg
+from mjlab.sim import MujocoCfg, SimulationCfg
+from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
+from mjlab.terrains import TerrainEntityCfg
+from mjlab.terrains.terrain_generator import TerrainGeneratorCfg
+from mjlab.utils.noise import UniformNoiseCfg as Unoise
+from mjlab.viewer import ViewerConfig
+
+from . import mdp
+
+##
+# Terrain
+##
+
+rough_terrain_cfg = TerrainEntityCfg(
+    terrain_type="generator",
+    terrain_generator=TerrainGeneratorCfg(
+        size=(8.0, 8.0),
+        num_rows=10,
+        num_cols=10,
+        border_width=20.0,
+        sub_terrains={
+            "flat": terrain_gen.BoxFlatTerrainCfg(proportion=0.4),
+            "rough": terrain_gen.HfRandomUniformTerrainCfg(
+                proportion=0.4,
+                noise_range=(0.01, 0.05),
+                noise_step=0.01,
+                vertical_scale=0.01,
+            ),
+            "tilted_grid": terrain_gen.BoxTiltedGridTerrainCfg(
+                proportion=0.0,
+                grid_width=1.0,
+                tilt_range_deg=10.0,
+                height_range=0.05,
+                platform_width=1.0,
+                border_width=0.25,
+                floor_depth=0.1,
+            ),
+            "pyramid_slope": terrain_gen.HfPyramidSlopedTerrainCfg(
+                proportion=0.1,
+                slope_range=(0.0, 0.1),
+                platform_width=2.0,
+                border_width=0.25,
+            ),
+            "pyramid_slope_inv": terrain_gen.HfPyramidSlopedTerrainCfg(
+                proportion=0.1,
+                slope_range=(0.0, 0.1),
+                platform_width=2.0,
+                border_width=0.25,
+                inverted=True,
+            ),
+        },
+    ),
+)
+
+##
+# MDP settings
+##
+
+commands: dict[str, CommandTermCfg] = {
+    "base_velocity": UniformVelocityCommandCfg(
+        entity_name="robot",
+        resampling_time_range=(3.0, 8.0),
+        rel_standing_envs=0.1,
+        rel_heading_envs=0.3,
+        rel_forward_envs=0.2,
+        heading_command=True,
+        heading_control_stiffness=0.5,
+        debug_vis=True,
+        ranges=UniformVelocityCommandCfg.Ranges(
+            lin_vel_x=(-1.0, 1.0),
+            lin_vel_y=(-0.5, 0.5),
+            ang_vel_z=(-0.5, 0.5),
+            heading=(-math.pi, math.pi),
+        ),
+    ),
+    "base_height": mdp.UniformHeightCommandCfg(
+        entity_name="robot",
+        resampling_time_range=(3.0, 8.0),
+        rel_crouch_envs=0.5,
+        ranges=mdp.UniformHeightCommandCfg.Ranges(
+            height=(0.0, 1.0),
+        ),
+    ),
+}
+
+actions: dict[str, ActionTermCfg] = {
+    "joint_pos": JointPositionActionCfg(
+        entity_name="robot",
+        actuator_names=(".*",),
+        scale=0.5,  # Override per-robot.
+        use_default_offset=True,
+    )
+}
+
+observations = {
+    "actor": ObservationGroupCfg(
+        terms={
+            "base_ang_vel": ObservationTermCfg(
+                func=mdp.base_ang_vel,
+                noise=Unoise(n_min=-0.2, n_max=0.2),
+            ),
+            "projected_gravity": ObservationTermCfg(
+                func=mdp.projected_gravity,
+                noise=Unoise(n_min=-0.05, n_max=0.05),
+            ),
+            "velocity_commands": ObservationTermCfg(
+                func=mdp.generated_commands,
+                params={"command_name": "base_velocity"},
+            ),
+            "height_commands": ObservationTermCfg(
+                func=mdp.generated_commands,
+                params={"command_name": "base_height"},
+            ),
+            "joint_pos": ObservationTermCfg(
+                func=mdp.joint_pos_rel,
+                noise=Unoise(n_min=-0.01, n_max=0.01),
+            ),
+            "joint_vel": ObservationTermCfg(
+                func=mdp.joint_vel_rel,
+                noise=Unoise(n_min=-1.5, n_max=1.5),
+            ),
+            "actions": ObservationTermCfg(func=mdp.last_action),
+        },
+        history_length=4,
+        concatenate_terms=True,
+        enable_corruption=True,
+    ),
+    "critic": ObservationGroupCfg(
+        terms={
+            "base_lin_vel": ObservationTermCfg(
+                func=mdp.base_lin_vel,
+            ),
+            "base_ang_vel": ObservationTermCfg(
+                func=mdp.base_ang_vel,
+            ),
+            "projected_gravity": ObservationTermCfg(
+                func=mdp.projected_gravity,
+            ),
+            "velocity_commands": ObservationTermCfg(
+                func=mdp.generated_commands,
+                params={"command_name": "base_velocity"},
+            ),
+            "height_commands": ObservationTermCfg(
+                func=mdp.generated_commands,
+                params={"command_name": "base_height"},
+            ),
+            "joint_pos": ObservationTermCfg(
+                func=mdp.joint_pos_rel,
+            ),
+            "joint_vel": ObservationTermCfg(
+                func=mdp.joint_vel_rel,
+            ),
+            "actions": ObservationTermCfg(func=mdp.last_action),
+        },
+        history_length=4,
+        concatenate_terms=True,
+        enable_corruption=False,
+    ),
+}
+
+events = {
+    "reset_base": EventTermCfg(
+        func=mdp.reset_root_state_uniform,
+        mode="reset",
+        params={
+            "pose_range": {
+                "x": (-0.5, 0.5),
+                "y": (-0.5, 0.5),
+                "z": (0.01, 0.05),
+                "yaw": (-3.14, 3.14),
+            },
+            "velocity_range": {},
+        },
+    ),
+    "reset_robot_joints": EventTermCfg(
+        func=mdp.reset_joints_by_offset,
+        mode="reset",
+        params={
+            "position_range": (-0.1, 0.1),
+            "velocity_range": (0.0, 0.0),
+            "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
+        },
+    ),
+    "push_robot": EventTermCfg(
+        func=mdp.push_by_setting_velocity,
+        mode="interval",
+        interval_range_s=(3.0, 8.0),
+        params={
+            "velocity_range": {
+                "x": (-2.0, 2.0),
+                "y": (-2.0, 2.0),
+                "z": (-1.0, 1.0),
+                "roll": (-0.78, 0.78),
+                "pitch": (-0.78, 0.78),
+                "yaw": (-1.57, 1.57),
+            },
+        },
+    ),
+    "foot_friction": EventTermCfg(
+        mode="startup",
+        func=dr.geom_friction,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", geom_names=()),  # Set per-robot.
+            "operation": "abs",
+            "ranges": (0.3, 1.2),
+            "shared_random": True,  # All foot geoms share the same friction.
+        },
+    ),
+    "encoder_bias": EventTermCfg(
+        mode="startup",
+        func=dr.encoder_bias,
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+            "bias_range": (-0.015, 0.015),
+        },
+    ),
+    "base_inertia": EventTermCfg(
+        mode="startup",
+        func=dr.pseudo_inertia,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
+            "alpha_range": (-0.1, 0.1),  # mass
+            "t_range": (-0.05, 0.05),  # center of mass
+        },
+    ),
+    "body_inertia": EventTermCfg(
+        mode="startup",
+        func=dr.pseudo_inertia,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
+            "alpha_range": (-0.1, 0.1),  # mass
+            "t_range": (-0.01, 0.01),  # center of mass
+        },
+    ),
+    "pd_gains": EventTermCfg(
+        mode="startup",
+        func=dr.pd_gains,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", joint_names=(".*_joint")),
+            "operation": "scale",
+            "kp_range": (0.9, 1.1),
+            "kd_range": (0.9, 1.1),
+        },
+    ),
+}
+
+rewards = {
+    "track_lin_vel_exp": RewardTermCfg(
+        func=mdp.track_lin_vel_exp,
+        weight=3.0,
+        params={
+            "command_name": "base_velocity",
+            "std": math.sqrt(0.25),
+            # Relax velocity tracking toward the crouch pose (height command -> 0),
+            # since a low posture cannot walk fast.
+            "height_command_name": "base_height",
+            "crouch_std_scale": 3.0,
+            # Below this height command, zero the velocity command so the robot
+            # is not required to walk while crouching.
+            "no_walk_height_threshold": 0.5,
+        },
+    ),
+    "track_ang_vel_exp": RewardTermCfg(
+        func=mdp.track_ang_vel_exp,
+        weight=3.0,
+        params={
+            "command_name": "base_velocity",
+            "std": math.sqrt(0.25),
+            # Relax velocity tracking toward the crouch pose (height command -> 0).
+            "height_command_name": "base_height",
+            "crouch_std_scale": 3.0,
+            # Below this height command, zero the velocity command so the robot
+            # is not required to walk while crouching.
+            "no_walk_height_threshold": 0.5,
+        },
+    ),
+    "upright": RewardTermCfg(
+        func=mdp.upright,
+        weight=1.0,
+        params={
+            "std": math.sqrt(0.2),
+            "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
+        },
+    ),
+    "pose": RewardTermCfg(
+        func=mdp.variable_posture,
+        weight=3.0,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
+            "command_name": "base_velocity",
+            "std_standing": {},  # Set per-robot.
+            "std_walking": {},  # Set per-robot.
+            "std_running": {},  # Set per-robot.
+            "std_crouch": {},  # Set per-robot.
+            "walking_threshold": 0.05,
+            "running_threshold": 1.5,
+            # Desired pose is linearly interpolated between crouch (command=0) and
+            # stand (command=1 = default_joint_pos) based on the height command.
+            "height_command_name": "base_height",
+            "crouch_joint_pos": {},  # Set per-robot.
+        },
+    ),
+    "body_ang_vel": RewardTermCfg(
+        func=mdp.body_angular_velocity_penalty,
+        weight=0.0,  # Override per-robot
+        params={"asset_cfg": SceneEntityCfg("robot", body_names=())},  # Set per-robot.
+    ),
+    "angular_momentum": RewardTermCfg(
+        func=mdp.angular_momentum_penalty,
+        weight=0.0,  # Override per-robot
+        params={"sensor_name": "robot/root_angmom"},
+    ),
+    "dof_pos_limits": RewardTermCfg(func=mdp.joint_pos_limits, weight=-1.0),
+    "joint_vel": RewardTermCfg(
+        func=mdp.joint_vel_l2,
+        weight=-0.01,
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names=(".*",))},
+    ),
+    "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.1),
+    "air_time": RewardTermCfg(
+        func=mdp.feet_air_time,
+        weight=0.0,  # Override per-robot.
+        params={
+            "sensor_name": "feet_ground_contact",
+            "threshold_min": 0.05,
+            "threshold_max": 0.5,
+            "command_name": "base_velocity",
+            "command_threshold": 0.5,
+        },
+    ),
+    "foot_clearance": RewardTermCfg(
+        func=mdp.feet_clearance,
+        weight=-2.0,
+        params={
+            "target_height": 0.1,
+            "height_sensor_name": "foot_height_scan",
+            "command_name": "base_velocity",
+            "command_threshold": 0.05,
+            "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
+        },
+    ),
+    "foot_swing_height": RewardTermCfg(
+        func=mdp.feet_swing_height,
+        weight=-0.25,
+        params={
+            "sensor_name": "feet_ground_contact",
+            "height_sensor_name": "foot_height_scan",
+            "target_height": 0.1,
+            "command_name": "base_velocity",
+            "command_threshold": 0.05,
+        },
+    ),
+    "foot_slip": RewardTermCfg(
+        func=mdp.feet_slip,
+        weight=-0.1,
+        params={
+            "sensor_name": "feet_ground_contact",
+            "command_name": "base_velocity",
+            "command_threshold": 0.05,
+            "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
+        },
+    ),
+    "soft_landing": RewardTermCfg(
+        func=mdp.soft_landing,
+        weight=-1e-5,
+        params={
+            "sensor_name": "feet_ground_contact",
+            "command_name": "base_velocity",
+            "command_threshold": 0.05,
+        },
+    ),
+}
+
+
+terminations = {
+    "time_out": TerminationTermCfg(func=mdp.time_out, time_out=True),
+    "fell_over": TerminationTermCfg(
+        func=mdp.bad_orientation,
+        params={"limit_angle": math.radians(70.0)},
+    ),
+    "out_of_terrain_bounds": TerminationTermCfg(
+        func=mdp.out_of_terrain_bounds,
+        time_out=True,
+    ),
+}
+
+##
+# Curriculum
+##
+
+curriculum = {
+    "terrain_levels": CurriculumTermCfg(
+        func=mdp.terrain_levels_vel,
+        params={"command_name": "base_velocity"},
+    ),
+    "command_vel": CurriculumTermCfg(
+        func=mdp.commands_vel,
+        params={
+            "command_name": "base_velocity",
+            "velocity_stages": [
+                {"step": 0, "lin_vel_x": (-1.0, 1.0), "ang_vel_z": (-0.5, 0.5)},
+                {"step": 5000 * 24, "lin_vel_x": (-1.0, 1.5), "ang_vel_z": (-0.7, 0.7)},
+                {"step": 10000 * 24, "lin_vel_x": (-1.0, 1.5), "ang_vel_z": (-1.0, 1.0)},
+            ],
+        },
+    ),
+}
+
+##
+# Environment configuration
+##
+
+metrics = {
+    "mean_action_acc": MetricsTermCfg(
+        func=mdp.mean_action_acc,
+    ),
+}
+
+
+@dataclass(kw_only=True)
+class VelocityEnvCfg(ManagerBasedRlEnvCfg):
+    # Scene settings
+    scene: SceneCfg = field(
+        default_factory=lambda: SceneCfg(
+            terrain=deepcopy(rough_terrain_cfg),
+            num_envs=1,
+            env_spacing=2.5,
+        )
+    )
+    # Basic settings
+    observations: dict = field(default_factory=lambda: deepcopy(observations))
+    actions: dict = field(default_factory=lambda: deepcopy(actions))
+    commands: dict = field(default_factory=lambda: deepcopy(commands))
+    curriculum: dict = field(default_factory=lambda: deepcopy(curriculum))
+    # MDP settings
+    rewards: dict = field(default_factory=lambda: deepcopy(rewards))
+    terminations: dict = field(default_factory=lambda: deepcopy(terminations))
+    events: dict = field(default_factory=lambda: deepcopy(events))
+    metrics: dict = field(default_factory=lambda: deepcopy(metrics))
+    viewer: ViewerConfig = field(
+        default_factory=lambda: ViewerConfig(
+            origin_type=ViewerConfig.OriginType.ASSET_BODY,
+            entity_name="robot",
+            body_name="",  # Set per-robot.
+            distance=3.0,
+            elevation=-5.0,
+            azimuth=90.0,
+        )
+    )
+    sim: SimulationCfg = field(
+        default_factory=lambda: SimulationCfg(
+            nconmax=35,
+            njmax=1500,
+            mujoco=MujocoCfg(
+                timestep=0.005,
+                iterations=10,
+                ls_iterations=20,
+            ),
+        ),
+    )
+    decimation: int = 4
+    episode_length_s: float = 20.0

@@ -42,8 +42,7 @@ DAMPING_EC_A4315 = 8
 THS_OSTRICH_CFG = EntityCfg(
     spec_fn=lambda: mujoco.MjSpec.from_file(str(ONEHBC_ROOT / "robot_assets/ths_ostrich/urdf/ostrich.xml")),
     init_state=EntityCfg.InitialStateCfg(
-        pos=(0.0, 0.0, 0.78),
-        # pos=(0.0, 0.0, 0.725), # for ostrich_final.xml
+        pos=(0.0, 0.0, 0.725),
         joint_pos={
             "left_hip_pitch_joint": 0.52,
             "left_hip_roll_joint": -0.10,

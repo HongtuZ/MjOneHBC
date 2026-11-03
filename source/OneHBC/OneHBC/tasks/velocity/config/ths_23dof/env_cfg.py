@@ -123,55 +123,6 @@ class VelocityRoughEnvCfg(VelocityEnvCfg):
                 "asset_cfg": SceneEntityCfg("robot", site_names=".*_foot_site"),
             },
         )
-        # self.rewards["low_speed_sway_penalty"] = RewardTermCfg(
-        #     func=mdp.low_speed_sway_penalty,
-        #     weight=-1e-2,
-        #     params={
-        #         "command_name": "base_velocity",
-        #         "command_threshold": 0.1,
-        #     },
-        # )
-        # self.rewards["feet_slide"] = RewardTermCfg(
-        #     func=mdp.feet_slide,
-        #     weight=-0.5,
-        #     params={
-        #         "sensor_name": "feet_ground_contact",
-        #         "command_name": "base_velocity",
-        #         "command_threshold": 0.1,
-        #         "asset_cfg": SceneEntityCfg("robot", site_names=".*_foot_site"),
-        #     },
-        # )
-        # self.rewards["feet_stumble"] = RewardTermCfg(
-        #     func=mdp.feet_stumble,
-        #     weight=-0.1,
-        #     params={
-        #         "sensor_name": "feet_ground_contact",
-        #     },
-        # )
-        # self.rewards["soft_landing"] = RewardTermCfg(
-        #     func=mdp.soft_landing,
-        #     weight=-1e-5,
-        #     params={
-        #         "sensor_name": "feet_ground_contact",
-        #         "command_name": "base_velocity",
-        #         "command_threshold": 0.1,
-        #     },
-        # )
-        # self.rewards["self_collision"] = RewardTermCfg(
-        #     func=mdp.self_collision_cost,
-        #     weight=-1,
-        #     params={
-        #         "force_threshold": 10,
-        #         "sensor_name": "self_collision",
-        #     },
-        # )
-
-        # # 惩罚脚踝关节横滚扭矩过大
-        # self.rewards["ankle_roll_torque_limit"] = RewardTermCfg(
-        #     func=mdp.joint_torque_soft_limit,
-        #     weight=-1.0,
-        #     params={"threshold": 2.0, "asset_cfg": SceneEntityCfg("robot", joint_names=".*_ankle_roll_.*")},
-        # )
 
         # 手臂跟踪腿部协调奖励项
         self.rewards["shoulder_thigh_coordination"] = RewardTermCfg(func=mdp.shoulder_thigh_coordination, weight=0.5)

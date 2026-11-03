@@ -146,33 +146,6 @@ def shoulder_thigh_coordination(
     return reward
 
 
-def low_speed_sway_penalty(
-    env: ManagerBasedRlEnv,
-    command_name: str,
-    command_threshold: float = 0.1,
-    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
-) -> torch.Tensor:
-    """当命令速度低于阈值时，惩罚线速度和角速度。
-
-    此函数在命令速度非常小时惩罚机器人的运动（包括线速度和角速度），
-    鼓励机器人在低速命令期间保持静止。
-    """
-    # 提取使用的量（以启用类型提示）                                                              # 获取场景中的刚体资产对象
-    asset: Entity = env.scene[asset_cfg.name]
-
-    # 获取命令速度                                                                                   # 从命令管理器获取指定名称的命令张量
-    command = env.command_manager.get_command(command_name)
-    command_speed = torch.norm(command[:, :2], dim=1)  # 计算命令在水平面 (x, y) 上的速度范数
-    # 惩罚 xy 平面内的线速度                                                                         # 计算机器人本体坐标系下水平线速度的平方和
-    lin_vel_penalty = torch.sum(torch.square(asset.data.root_link_lin_vel_b[:, :2]), dim=1)
-    # 惩罚角速度                                                                                     # 计算机器人本体坐标系下角速度的平方和
-    ang_vel_penalty = torch.sum(torch.square(asset.data.root_link_ang_vel_b), dim=1)
-    # 总速度惩罚                                                                                     # 合并线速度和角速度的惩罚项
-    vel_penalty = lin_vel_penalty + ang_vel_penalty
-    # 仅当命令速度低于阈值时应用惩罚                                                                 # 生成掩码并转换为浮点数，低速时保留惩罚值，高速时归零
-    return vel_penalty * (command_speed < command_threshold).float()
-
-
 def feet_stumble(env: ManagerBasedRlEnv, sensor_name: str) -> torch.Tensor:
     # extract the used quantities (to enable type-hinting)
     contact_sensor: ContactSensor = env.scene[sensor_name]
